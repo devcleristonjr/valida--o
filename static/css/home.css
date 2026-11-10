@@ -1,0 +1,229 @@
+:root {
+  color-scheme: light;
+  --wine: #8f0808;
+  --wine-dark: #5c0000;
+  --ink: #242633;
+  --muted: #747989;
+  --line: #e7e8ee;
+  --page: #f5f6f9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(ellipse at 50% 0, #f8e9ea 0, transparent 46%),
+    var(--page);
+  color: var(--ink);
+  font: 16px/1.5 Inter, "Segoe UI", Arial, sans-serif;
+}
+
+.portal {
+  width: min(100%, 900px);
+}
+
+.portal-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.brand-mark {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #a60000, var(--wine-dark));
+  box-shadow: 0 8px 18px #74000025;
+  color: white;
+  font-size: 30px;
+  font-weight: 900;
+}
+
+.eyebrow,
+.section-label {
+  margin: 0;
+  color: var(--wine);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.portal-header h1 {
+  margin: 1px 0 0;
+  font-size: 26px;
+  letter-spacing: -.04em;
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.welcome {
+  padding: clamp(24px, 5vw, 48px);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 18px 55px #2426330d;
+}
+
+.welcome h2 {
+  margin: 7px 0 5px;
+  font-size: clamp(24px, 4vw, 32px);
+  letter-spacing: -.035em;
+}
+
+.welcome > p:not(.section-label) {
+  margin: 0;
+  color: var(--muted);
+}
+
+.access-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 30px;
+}
+
+.access-card {
+  min-width: 0;
+  min-height: 208px;
+  display: flex;
+  gap: 16px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.access-card:hover {
+  transform: translateY(-2px);
+  border-color: #d7aeb3;
+  box-shadow: 0 12px 28px #24263312;
+}
+
+.access-card:focus-visible {
+  outline: 3px solid #8f080866;
+  outline-offset: 3px;
+}
+
+.card-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 13px;
+  background: #fff0f1;
+  color: var(--wine);
+}
+
+.admin-card .card-icon {
+  background: #f1f2f5;
+  color: #434856;
+}
+
+.card-icon svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.card-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.card-copy strong {
+  font-size: 17px;
+}
+
+.card-copy > span:not(.card-action) {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.card-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 18px;
+  color: var(--wine);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.card-action span {
+  font-size: 18px;
+  transition: transform .16s ease;
+}
+
+.access-card:hover .card-action span {
+  transform: translateX(3px);
+}
+
+footer {
+  margin-top: 20px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+@media (max-width: 620px) {
+  body {
+    padding: 20px 14px;
+  }
+
+  .portal-header {
+    margin-bottom: 18px;
+  }
+
+  .brand-mark {
+    width: 50px;
+    height: 50px;
+    border-radius: 14px;
+  }
+
+  .access-options {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-top: 22px;
+  }
+
+  .access-card {
+    min-height: 170px;
+    padding: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+}

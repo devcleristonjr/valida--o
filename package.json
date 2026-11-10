@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "scripts": {
+    "build:qr": "esbuild static/js/qr-reader-entry.js --bundle --minify --outfile=static/js/qr-reader.bundle.js"
+  },
+  "dependencies": {
+    "jsqr": "1.4.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.5"
+  }
+}

@@ -1,0 +1,29 @@
+#tab-cadastro > .grid {
+  grid-template-columns: minmax(0, 1080px);
+  justify-content: center;
+}
+
+.institutional-header > .home-link {
+  flex: 0 0 auto;
+  align-self: center;
+  border-color: #ffffffb3;
+  background: #fff;
+  color: #870000;
+  text-decoration: none;
+}
+
+.institutional-header > .home-link:hover {
+  background: #fff0f1;
+}
+
+@media (max-width: 850px) {
+  #tab-cadastro > .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 650px) {
+  .institutional-header > .home-link {
+    margin-inline: auto;
+  }
+}

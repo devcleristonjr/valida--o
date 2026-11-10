@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PLEITOS • Administração SERIN</title>
+  <link rel="stylesheet" href="/static/css/admin.css">
+  <script src="/static/js/qr-reader.bundle.js" defer></script>
+  <script src="/static/js/admin.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand-mark" aria-hidden="true">S</div>
+    <div><p class="eyebrow">SERIN • PLEITOS</p><h1>Gestão de audiências</h1></div>
+    <a class="public-link" href="/">Início</a>
+  </header>
+  <main class="wrap">
+    <section class="panel login-panel" id="loginPanel">
+      <h2>Acesso administrativo</h2>
+      <p>Entre com sua conta autorizada para consultar dados de participantes.</p>
+      <form id="loginForm">
+        <label>Usuário<input name="username" autocomplete="username" required></label>
+        <label>Senha<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">Entrar</button>
+      </form>
+      <p class="message" id="loginMessage" role="status"></p>
+    </section>
+
+    <div id="adminApp" hidden>
+      <div class="toolbar">
+        <p>Usuário: <strong id="adminName"></strong></p>
+        <button id="logoutButton" class="secondary">Sair</button>
+      </div>
+
+      <section class="panel admin-only">
+        <div class="section-title"><div><h2>Audiências</h2><p>Cadastre e disponibilize audiências para inscrição pública.</p></div></div>
+        <form id="audienceForm" class="inline-form">
+          <label>Assunto<input name="name" maxlength="160" required></label>
+          <label>Data<input name="date" type="date" required></label>
+          <label>Horário<input name="time" type="time" required></label>
+          <button class="primary" type="submit">Criar audiência</button>
+        </form>
+        <p class="message" id="audienceMessage" role="status"></p>
+        <div id="audiencesList" class="audiences-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title"><div><h2>Painel de presença</h2><p>Indicadores e movimentação sincronizados com o banco de dados.</p></div>
+          <label class="filter-label">Audiência<select id="dashboardAudience"></select></label>
+        </div>
+        <div class="metrics">
+          <article><span>Cadastrados</span><strong id="metricRegistered">0</strong></article>
+          <article><span>Presentes</span><strong id="metricPresent">0</strong></article>
+          <article><span>Ausentes</span><strong id="metricAbsent">0</strong></article>
+          <article><span>Entradas validadas</span><strong id="metricEntries">0</strong></article>
+          <article><span>Tentativas inválidas</span><strong id="metricInvalid">0</strong></article>
+          <article><span>Comparecimento</span><strong id="metricPercent">0%</strong></article>
+        </div>
+        <div class="split">
+          <div><h3>Por categoria</h3><div id="categoryStats"></div></div>
+          <div><h3>Por município</h3><div id="cityStats"></div></div>
+        </div>
+        <h3>Últimas entradas</h3><div id="recentEntries" class="recent"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title"><div><h2>Recepção e validação</h2><p>Leia o QR Code, use leitor USB/Bluetooth ou digite o código.</p></div></div>
+        <div class="scanner-layout">
+          <div>
+            <video id="scannerVideo" playsinline muted></video>
+            <div class="actions">
+              <button id="cameraButton" class="secondary" type="button">Ativar câmera</button>
+              <button id="stopCameraButton" class="secondary" type="button" hidden>Parar câmera</button>
+            </div>
+          </div>
+          <form id="scanForm">
+            <label>Código da credencial<input id="scanCode" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" aria-label="Código da credencial"></label>
+            <button class="primary" type="submit">Validar entrada</button>
+            <div id="scanMessage" role="status" aria-live="assertive" aria-atomic="true" class="scan-message"></div>
+          </form>
+        </div>
+      </section>
+
+      <section class="panel admin-only">
+        <div class="section-title"><div><h2>Participantes</h2><p>CPF e contatos aparecem apenas para usuários autenticados.</p></div>
+          <div class="export-actions">
+            <button data-export="csv" class="secondary">CSV</button>
+            <button data-export="xlsx" class="secondary">Excel</button>
+            <button data-export="pdf" class="secondary">PDF</button>
+          </div>
+        </div>
+        <div class="filters">
+          <input id="searchPeople" type="search" placeholder="Nome, CPF, município ou categoria" aria-label="Pesquisar participantes por nome, CPF, município ou categoria">
+          <select id="filterAudience"><option value="">Todas as audiências</option></select>
+          <input id="filterDate" type="date" aria-label="Filtrar por data">
+          <select id="filterStatus"><option value="">Todas as situações</option><option value="present">Presente</option><option value="absent">Ausente</option><option value="cancelled">Credencial cancelada</option></select>
+          <button id="refreshPeople" class="secondary">Atualizar</button>
+        </div>
+        <div class="table-wrap">
+          <table><thead><tr><th>Nome / CPF</th><th>Categoria</th><th>Município</th><th>Cargo</th><th>Audiência</th><th>Entrada</th><th>Situação</th><th>Ações</th></tr></thead>
+            <tbody id="peopleRows"><tr><td colspan="8">Carregando…</td></tr></tbody></table>
+        </div>
+        <p class="message" id="peopleMessage" role="status"></p>
+      </section>
+
+      <section class="panel admin-only">
+        <div class="section-title"><div><h2>Histórico administrativo e de acessos</h2><p>Registro das validações e operações administrativas.</p></div></div>
+        <div id="historyRows" class="history-list"></div>
+      </section>
+    </div>
+  </main>
+
+  <dialog id="editDialog">
+    <form id="editForm" method="dialog">
+      <h2>Editar participante</h2>
+      <input type="hidden" name="id">
+      <label>Nome<input name="name" maxlength="150" required></label>
+      <label>CPF<input name="cpf" maxlength="14" required></label>
+      <label>Categoria<input name="category" maxlength="40" required></label>
+      <label>Município<input name="city" maxlength="100" required></label>
+      <label>Cargo / função<input name="role" maxlength="120" required></label>
+      <label>Organização<input name="organization" maxlength="160"></label>
+      <label>Telefone<input name="phone" maxlength="20" required></label>
+      <label>E-mail<input name="email" type="email"></label>
+      <img id="editPhoto" class="edit-photo" alt="Fotografia do participante" hidden>
+      <div class="actions"><button type="button" class="secondary" id="cancelEdit">Cancelar</button><button type="submit" class="primary">Salvar alterações</button></div>
+      <p class="message" id="editMessage" role="status"></p>
+    </form>
+  </dialog>
+  <dialog id="audienceEditDialog">
+    <form id="audienceEditForm">
+      <h2>Editar audiência</h2>
+      <input type="hidden" name="id">
+      <label>Assunto<input name="name" maxlength="160" required></label>
+      <label>Data<input name="date" type="date" required></label>
+      <label>Horário<input name="time" type="time" required></label>
+      <div class="actions">
+        <button type="button" class="secondary" id="cancelAudienceEdit">Cancelar</button>
+        <button type="submit" class="primary">Salvar alterações</button>
+      </div>
+      <p class="message" id="audienceEditMessage" role="status"></p>
+    </form>
+  </dialog>
+  <dialog id="credentialDialog">
+    <div class="credential-view">
+      <h2>Credencial do participante</h2>
+      <p id="credentialName"></p>
+      <img id="credentialQr" alt="QR Code da credencial">
+      <p id="credentialCode" class="credential-code"></p>
+      <button type="button" class="secondary" id="closeCredential">Fechar</button>
+    </div>
+  </dialog>
+</body>
+</html>
