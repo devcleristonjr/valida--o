@@ -3,7 +3,7 @@ import hmac
 import io
 import re
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -15,18 +15,39 @@ from flask import (
     request,
     send_file,
     session,
+    url_for,
 )
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash
 
 from ..extensions import db
-from ..models import AccessLog, Admin, Audience, AuditLog, Participant
+from ..models import (
+    AccessLog,
+    Admin,
+    Audience,
+    AuditLog,
+    EmailNotification,
+    Event,
+    EventParticipant,
+    LookupChallenge,
+    Participant,
+    RegistrationInvite,
+    utcnow,
+)
+from ..rate_limit import rate_limit_retry_after
 from ..services import (
+    activity_capacity_payload,
+    activity_status,
+    deliver_pending_notifications,
     decrypt,
     digest,
     encrypt,
+    event_participant_summary,
     participant_summary,
+    promote_waitlist,
+    queue_activity_cancellation,
+    queue_due_reminders,
     remove_photo,
     validate_code,
 )
@@ -68,7 +89,9 @@ def permission_required(*roles):
 
 
 admin_required = permission_required("admin")
+invite_manager_required = permission_required("admin", "organizer")
 staff_required = permission_required("admin", "reception")
+session_required = permission_required("admin", "organizer", "reception")
 
 
 def record_audit(admin, action, participant_id=None, details=""):
@@ -89,7 +112,53 @@ def audience_payload(audience):
         "date": audience.date.isoformat(),
         "time": audience.time.strftime("%H:%M"),
         "active": audience.active,
+        **activity_capacity_payload(audience),
     }
+
+
+def event_payload(event):
+    return {
+        "id": event.id,
+        "name": event.name,
+        "date": event.date.isoformat(),
+        "time": event.start_time.strftime("%H:%M"),
+        "end_time": event.end_time.strftime("%H:%M") if event.end_time else None,
+        "location": event.location,
+        "active": event.active,
+        **activity_capacity_payload(event),
+    }
+
+
+ACTIVITY_STATES = {"preparing", "open", "closed", "cancelled", "archived"}
+
+
+def update_activity_settings(activity, data):
+    if "capacity" in data:
+        value = data["capacity"]
+        if value in (None, ""):
+            activity.capacity = None
+        elif isinstance(value, bool):
+            return "A capacidade deve ser um número inteiro positivo."
+        else:
+            try:
+                capacity = int(value)
+            except (TypeError, ValueError):
+                return "A capacidade deve ser um número inteiro positivo."
+            if str(capacity) != str(value).strip() or capacity < 1:
+                return "A capacidade deve ser um número inteiro positivo."
+            activity.capacity = capacity
+    if "status" in data:
+        status = data["status"]
+        if not isinstance(status, str) or status not in ACTIVITY_STATES:
+            return "Situação da atividade inválida."
+        activity.lifecycle_status = status
+        activity.active = status == "open"
+    elif "active" in data:
+        if not isinstance(data["active"], bool):
+            return "Situação das inscrições inválida."
+        activity.lifecycle_status = "open" if data["active"] else "closed"
+        activity.active = data["active"]
+    return None
 
 
 def _participant_query():
@@ -110,6 +179,8 @@ def _participant_query():
         query = query.filter(Participant.checked_at.is_(None), Participant.status == "active")
     elif status_filter in {"active", "cancelled"}:
         query = query.filter(Participant.status == status_filter)
+    elif status_filter == "waitlisted":
+        query = query.filter(Participant.status == "waitlisted")
     search = request.args.get("q", "").strip()
     if search:
         term = f"%{search}%"
@@ -123,6 +194,92 @@ def _participant_query():
             filters.append(Participant.cpf_hash == digest(cpf))
         query = query.filter(or_(*filters))
     return query.order_by(Audience.date.desc(), Participant.name)
+
+
+@admin_bp.post("/convites")
+@invite_manager_required
+def create_registration_invite():
+    retry_after = rate_limit_retry_after("registration-invite-create", 8, 3600)
+    if retry_after:
+        response = jsonify({"error": "Muitas solicitações. Tente novamente mais tarde."})
+        response.status_code = 429
+        response.headers["Retry-After"] = str(retry_after)
+        return response
+
+    data = json_object()
+    cpf = normalize_cpf(data.get("cpf"))
+    if not valid_cpf(cpf):
+        return jsonify({"error": "Informe um CPF válido."}), 400
+    replace_active = data.get("replace_active", False)
+    if not isinstance(replace_active, bool):
+        return jsonify({"error": "Solicitação inválida."}), 400
+
+    now = utcnow()
+    existing_query = RegistrationInvite.query.filter_by(
+        cpf_hash=digest(cpf),
+        used_at=None,
+        invalidated_at=None,
+    )
+    active = (
+        existing_query.filter(RegistrationInvite.expires_at > now)
+        .with_for_update()
+        .first()
+    )
+    if active and not replace_active:
+        return jsonify(
+            {
+                "error": (
+                    "Já existe um convite ativo para este CPF. "
+                    "Confirme a emissão de um novo link para invalidar o anterior."
+                ),
+                "active_invite": True,
+            }
+        ), 409
+
+    for invite in existing_query.with_for_update().all():
+        invite.invalidated_at = now
+
+    token = secrets.token_urlsafe(32)
+    invite = RegistrationInvite(
+        cpf_hash=digest(cpf),
+        cpf_encrypted=encrypt(cpf),
+        token_hash=digest(token),
+        created_at=now,
+        expires_at=now + timedelta(days=current_app.config["REGISTRATION_INVITE_DAYS"]),
+        created_by=current_admin().id,
+    )
+    db.session.add(invite)
+    record_audit(current_admin(), "registration_invite_created", details="Convite de cadastro gerado")
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        active_invite = (
+            RegistrationInvite.query.filter_by(
+                cpf_hash=digest(cpf),
+                used_at=None,
+                invalidated_at=None,
+            )
+            .first()
+        )
+        if active_invite:
+            return jsonify(
+                {
+                    "error": (
+                        "Já existe um convite ativo para este CPF. "
+                        "Confirme a emissão de um novo link para invalidar o anterior."
+                    ),
+                    "active_invite": True,
+                }
+            ), 409
+        raise
+
+    return jsonify(
+        {
+            "url": url_for("invite_registration_page", token=token),
+            "expires_at": invite.expires_at.isoformat(),
+        }
+    ), 201
 
 
 @admin_bp.post("/login")
@@ -149,7 +306,7 @@ def login():
 
 
 @admin_bp.get("/me")
-@staff_required
+@session_required
 def me():
     admin = current_admin()
     return jsonify(
@@ -158,7 +315,7 @@ def me():
 
 
 @admin_bp.post("/logout")
-@staff_required
+@session_required
 def logout():
     admin = current_admin()
     record_audit(admin, "logout", details="Logout administrativo")
@@ -188,6 +345,9 @@ def create_audience():
     if not name or len(name) > 160:
         return jsonify({"error": "Informe o assunto da audiência (até 160 caracteres)."}), 400
     audience = Audience(name=name, date=audience_date, time=audience_time)
+    error = update_activity_settings(audience, data)
+    if error:
+        return jsonify({"error": error}), 400
     db.session.add(audience)
     admin = current_admin()
     record_audit(admin, "create_audience", details=f"{name} · {audience_date.isoformat()}")
@@ -221,15 +381,321 @@ def update_audience(audience_id):
             audience.time = datetime.strptime(data["time"], "%H:%M").time()
         except (TypeError, ValueError):
             return jsonify({"error": "Horário inválido."}), 400
-    if "active" in data and isinstance(data["active"], bool):
-        audience.active = data["active"]
+    previous_status = audience.lifecycle_status
+    error = update_activity_settings(audience, data)
+    if error:
+        return jsonify({"error": error}), 400
+    promoted = promote_waitlist(audience) if audience.active else []
+    cancellation_notice_count = (
+        queue_activity_cancellation(audience)
+        if previous_status != "cancelled" and audience.lifecycle_status == "cancelled"
+        else 0
+    )
     record_audit(current_admin(), "update_audience", details=audience.name)
     try:
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
         return jsonify({"error": "Já existe audiência com este assunto, data e horário."}), 409
-    return jsonify(audience_payload(audience))
+    delivery = deliver_pending_notifications() if promoted or cancellation_notice_count else {"failed": 0}
+    return jsonify(
+        {
+            **audience_payload(audience),
+            "promoted": len(promoted),
+            "notification_failures": delivery["failed"],
+            "cancellation_notices": cancellation_notice_count,
+        }
+    )
+
+
+@admin_bp.get("/events")
+@admin_required
+def list_events():
+    rows = Event.query.order_by(Event.date.desc(), Event.start_time.desc()).all()
+    return jsonify([event_payload(row) for row in rows])
+
+
+@admin_bp.post("/events")
+@admin_required
+def create_event():
+    data = json_object()
+    name = data.get("name", "")
+    name = name.strip() if isinstance(name, str) else ""
+    location = data.get("location", "")
+    location = location.strip() if isinstance(location, str) else ""
+    try:
+        event_date = datetime.strptime(data.get("date", ""), "%Y-%m-%d").date()
+        start_time = datetime.strptime(data.get("time", ""), "%H:%M").time()
+        end_time = (
+            datetime.strptime(data["end_time"], "%H:%M").time()
+            if data.get("end_time")
+            else None
+        )
+    except (TypeError, ValueError):
+        return jsonify({"error": "Data e horário do evento inválidos."}), 400
+    if not name or len(name) > 160:
+        return jsonify({"error": "Informe o nome do evento (até 160 caracteres)."}), 400
+    if not location or len(location) > 200:
+        return jsonify({"error": "Informe o local do evento (até 200 caracteres)."}), 400
+    if end_time and end_time <= start_time:
+        return jsonify({"error": "O horário de encerramento deve ser posterior ao início."}), 400
+    event = Event(
+        name=name,
+        date=event_date,
+        start_time=start_time,
+        end_time=end_time,
+        location=location,
+    )
+    error = update_activity_settings(event, data)
+    if error:
+        return jsonify({"error": error}), 400
+    db.session.add(event)
+    record_audit(current_admin(), "create_event", details=f"{name} · {event_date.isoformat()}")
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "Este evento já está cadastrado."}), 409
+    return jsonify(event_payload(event)), 201
+
+
+@admin_bp.patch("/events/<event_id>")
+@admin_required
+def update_event(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        return jsonify({"error": "Evento não encontrado."}), 404
+    data = json_object()
+    if "name" in data:
+        name = data["name"]
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 160:
+            return jsonify({"error": "Nome do evento inválido."}), 400
+        event.name = name.strip()
+    if "date" in data:
+        try:
+            event.date = datetime.strptime(data["date"], "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            return jsonify({"error": "Data inválida."}), 400
+    if "time" in data:
+        try:
+            event.start_time = datetime.strptime(data["time"], "%H:%M").time()
+        except (TypeError, ValueError):
+            return jsonify({"error": "Horário de início inválido."}), 400
+    if "end_time" in data:
+        try:
+            event.end_time = (
+                datetime.strptime(data["end_time"], "%H:%M").time()
+                if data["end_time"]
+                else None
+            )
+        except (TypeError, ValueError):
+            return jsonify({"error": "Horário de encerramento inválido."}), 400
+    if "location" in data:
+        location = data["location"]
+        if not isinstance(location, str) or not location.strip() or len(location.strip()) > 200:
+            return jsonify({"error": "Local do evento inválido."}), 400
+        event.location = location.strip()
+    if event.end_time and event.end_time <= event.start_time:
+        return jsonify({"error": "O horário de encerramento deve ser posterior ao início."}), 400
+    previous_status = event.lifecycle_status
+    error = update_activity_settings(event, data)
+    if error:
+        return jsonify({"error": error}), 400
+    promoted = promote_waitlist(event) if event.active else []
+    cancellation_notice_count = (
+        queue_activity_cancellation(event)
+        if previous_status != "cancelled" and event.lifecycle_status == "cancelled"
+        else 0
+    )
+    record_audit(current_admin(), "update_event", details=event.name)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "Já existe evento com este nome, data e horário."}), 409
+    delivery = deliver_pending_notifications() if promoted or cancellation_notice_count else {"failed": 0}
+    return jsonify(
+        {
+            **event_payload(event),
+            "promoted": len(promoted),
+            "notification_failures": delivery["failed"],
+            "cancellation_notices": cancellation_notice_count,
+        }
+    )
+
+
+@admin_bp.get("/event-participants")
+@admin_required
+def list_event_participants():
+    event_id = request.args.get("event_id", "")
+    if not event_id or not db.session.get(Event, event_id):
+        return jsonify({"error": "Selecione um evento válido."}), 400
+    query = EventParticipant.query.filter_by(event_id=event_id)
+    status_filter = request.args.get("status")
+    if status_filter == "present":
+        query = query.filter(EventParticipant.checked_at.isnot(None))
+    elif status_filter == "absent":
+        query = query.filter(
+            EventParticipant.checked_at.is_(None), EventParticipant.status == "active"
+        )
+    elif status_filter in {"active", "cancelled", "waitlisted"}:
+        query = query.filter(EventParticipant.status == status_filter)
+    search = request.args.get("q", "").strip()
+    if search:
+        term = f"%{search}%"
+        filters = [
+            EventParticipant.name.ilike(term),
+            EventParticipant.city.ilike(term),
+            EventParticipant.category.ilike(term),
+        ]
+        cpf = normalize_cpf(search)
+        if cpf:
+            filters.append(EventParticipant.cpf_hash == digest(cpf))
+        query = query.filter(or_(*filters))
+    participants = query.order_by(EventParticipant.name).limit(5000).all()
+    return jsonify(
+        [event_participant_summary(item, include_private=True) for item in participants]
+    )
+
+
+@admin_bp.get("/events/<event_id>/export")
+@admin_required
+def export_event_report(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        return jsonify({"error": "Evento não encontrado."}), 404
+    rows = EventParticipant.query.filter_by(event_id=event.id).order_by(
+        EventParticipant.name
+    ).all()
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(
+        ["Nome", "CPF", "Categoria", "Município", "Cargo/Função", "Telefone", "E-mail",
+         "Instagram", "Evento", "Data", "Horário", "Entrada", "Situação"]
+    )
+    for row in rows:
+        values = [
+            row.name,
+            decrypt(row.cpf_encrypted),
+            row.category,
+            row.city,
+            row.role,
+            decrypt(row.phone_encrypted),
+            decrypt(row.email_encrypted),
+            decrypt(row.instagram_encrypted),
+            event.name,
+            event.date.isoformat(),
+            event.start_time.strftime("%H:%M"),
+            row.checked_at.isoformat() if row.checked_at else "",
+            (
+                "Lista de espera" if row.status == "waitlisted"
+                else "Cancelada" if row.status == "cancelled"
+                else "Presente" if row.checked_at else "Ausente"
+            ),
+        ]
+        writer.writerow(
+            [("'" + str(value)) if str(value).startswith(("=", "+", "-", "@")) else value for value in values]
+        )
+    response = make_response("\ufeff" + output.getvalue())
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers["Content-Disposition"] = 'attachment; filename="lista-evento.csv"'
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@admin_bp.get("/events/<event_id>/dashboard")
+@admin_required
+def event_dashboard(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        return jsonify({"error": "Evento não encontrado."}), 404
+    query = EventParticipant.query.filter_by(event_id=event_id)
+    confirmed = query.filter_by(status="active")
+    registered = confirmed.count()
+    present = confirmed.filter(EventParticipant.checked_at.isnot(None)).count()
+    absent = confirmed.filter(EventParticipant.checked_at.is_(None)).count()
+    cancelled = query.filter_by(status="cancelled").count()
+    waitlisted = query.filter_by(status="waitlisted").count()
+    return jsonify(
+        {
+            "registered": registered,
+            "present": present,
+            "absent": absent,
+            "cancelled": cancelled,
+            "waitlisted": waitlisted,
+            "capacity": event.capacity,
+            "available_spots": (
+                None if event.capacity is None else max(event.capacity - registered, 0)
+            ),
+            "status": activity_status(event),
+            "attendance_percent": round(present * 100 / registered) if registered else 0,
+        }
+    )
+
+
+@admin_bp.get("/event-participants/<participant_id>/credential")
+@admin_required
+def event_participant_credential(participant_id):
+    participant = db.session.get(EventParticipant, participant_id)
+    if not participant:
+        return jsonify({"error": "Participante não encontrado."}), 404
+    if participant.status != "active":
+        return jsonify({"error": "Credencial cancelada."}), 409
+    return jsonify(
+        {
+            "credential": decrypt(participant.credential_encrypted),
+            "participant": event_participant_summary(participant),
+        }
+    )
+
+
+@admin_bp.post("/event-participants/<participant_id>/cancel")
+@admin_required
+def cancel_event_participant(participant_id):
+    participant = db.session.get(EventParticipant, participant_id)
+    if not participant:
+        return jsonify({"error": "Participante não encontrado."}), 404
+    reason = str(json_object().get("reason", "")).strip()
+    if not reason:
+        return jsonify({"error": "Informe o motivo do cancelamento."}), 400
+    was_confirmed = participant.status == "active"
+    event = participant.event
+    participant.status = "cancelled"
+    promoted = promote_waitlist(event) if was_confirmed else []
+    record_audit(current_admin(), "cancel_event_credential", participant.id, reason)
+    db.session.commit()
+    delivery = deliver_pending_notifications() if promoted else {"failed": 0}
+    return jsonify({"ok": True, "promoted": len(promoted), "notification_failures": delivery["failed"]})
+
+
+@admin_bp.delete("/event-participants/<participant_id>")
+@admin_required
+def delete_event_participant(participant_id):
+    participant = db.session.get(EventParticipant, participant_id)
+    if not participant:
+        return jsonify({"error": "Participante não encontrado."}), 404
+    reason = str(json_object().get("reason", "")).strip()
+    if len(reason) < 5:
+        return jsonify({"error": "Informe a justificativa de exclusão (mínimo 5 caracteres)."}), 400
+    was_confirmed = participant.status == "active"
+    event = participant.event
+    record_audit(current_admin(), "delete_event_participant", participant.id, reason)
+    photo = participant.photo_filename
+    AccessLog.query.filter_by(event_participant_id=participant.id).update(
+        {AccessLog.event_participant_id: None}, synchronize_session=False
+    )
+    LookupChallenge.query.filter_by(event_participant_id=participant.id).delete(
+        synchronize_session=False
+    )
+    EmailNotification.query.filter_by(event_participant_id=participant.id).delete(
+        synchronize_session=False
+    )
+    db.session.delete(participant)
+    promoted = promote_waitlist(event) if was_confirmed else []
+    db.session.commit()
+    remove_photo(photo)
+    delivery = deliver_pending_notifications() if promoted else {"failed": 0}
+    return jsonify({"ok": True, "promoted": len(promoted), "notification_failures": delivery["failed"]})
 
 
 @admin_bp.get("/participants")
@@ -301,10 +767,14 @@ def cancel_participant(participant_id):
     reason = str(data.get("reason", "")).strip()
     if not reason:
         return jsonify({"error": "Informe o motivo do cancelamento."}), 400
+    was_confirmed = participant.status == "active"
+    audience = participant.audience
     participant.status = "cancelled"
+    promoted = promote_waitlist(audience) if was_confirmed else []
     record_audit(current_admin(), "cancel_credential", participant.id, reason)
     db.session.commit()
-    return jsonify({"ok": True})
+    delivery = deliver_pending_notifications() if promoted else {"failed": 0}
+    return jsonify({"ok": True, "promoted": len(promoted), "notification_failures": delivery["failed"]})
 
 
 @admin_bp.get("/participants/<participant_id>/photo")
@@ -369,6 +839,10 @@ def dashboard():
     query = Participant.query
     if audience_id:
         query = query.filter_by(audience_id=audience_id)
+    all_registrations = query
+    total_waitlisted = all_registrations.filter_by(status="waitlisted").count()
+    total_cancelled = all_registrations.filter_by(status="cancelled").count()
+    query = query.filter_by(status="active")
     total = query.count()
     present = query.filter(Participant.checked_at.isnot(None)).count()
     invalid = AccessLog.query.filter_by(outcome="invalid").count()
@@ -385,7 +859,9 @@ def dashboard():
         .all()
     )
     recent = (
-        AccessLog.query.filter_by(outcome="valid")
+        AccessLog.query.filter(
+            AccessLog.outcome == "valid", AccessLog.participant_id.isnot(None)
+        )
         .order_by(AccessLog.created_at.desc())
         .limit(10)
         .all()
@@ -395,6 +871,8 @@ def dashboard():
             "registered": total,
             "present": present,
             "absent": max(total - present, 0),
+            "waitlisted": total_waitlisted,
+            "cancelled": total_cancelled,
             "validated_entries": present,
             "invalid_attempts": invalid,
             "attendance_percent": round(present * 100 / total) if total else 0,
@@ -402,7 +880,11 @@ def dashboard():
             "by_city": [{"city": city, "count": count} for city, count in cities],
             "recent_entries": [
                 {
-                    "name": row.participant.name if row.participant else "Participante",
+                    "name": (
+                        row.participant.name
+                        if row.participant
+                        else row.event_participant.name if row.event_participant else "Participante"
+                    ),
                     "at": row.created_at.isoformat(),
                     "method": row.method,
                 }
@@ -424,7 +906,11 @@ def history():
                     "outcome": row.outcome,
                     "method": row.method,
                     "detail": row.detail,
-                    "name": row.participant.name if row.participant else None,
+                    "name": (
+                        row.participant.name
+                        if row.participant
+                        else row.event_participant.name if row.event_participant else None
+                    ),
                     "at": row.created_at.isoformat(),
                 }
                 for row in access
@@ -441,6 +927,24 @@ def history():
     )
 
 
+@admin_bp.get("/notifications")
+@admin_required
+def notification_status():
+    pending = EmailNotification.query.filter_by(sent_at=None).count()
+    failed = EmailNotification.query.filter(
+        EmailNotification.sent_at.is_(None), EmailNotification.last_error.isnot(None)
+    ).count()
+    return jsonify({"pending": pending, "failed": failed})
+
+
+@admin_bp.post("/notifications/process")
+@admin_required
+def process_notifications():
+    queued = queue_due_reminders()
+    result = deliver_pending_notifications()
+    return jsonify({"queued": queued, **result})
+
+
 @admin_bp.get("/export")
 @admin_required
 def export_report():
@@ -454,7 +958,11 @@ def export_report():
             row.name, row.category, row.city, row.role, row.audience.name,
             row.audience.date.isoformat(), row.audience.time.strftime("%H:%M"),
             row.checked_at.isoformat() if row.checked_at else "",
-            "Presente" if row.checked_at else "Ausente",
+            (
+                "Lista de espera" if row.status == "waitlisted"
+                else "Cancelada" if row.status == "cancelled"
+                else "Presente" if row.checked_at else "Ausente"
+            ),
         ]
         for row in rows
     ]
@@ -548,6 +1056,8 @@ def delete_participant(participant_id):
     reason = str(data.get("reason", "")).strip()
     if len(reason) < 5:
         return jsonify({"error": "Informe a justificativa de exclusão (mínimo 5 caracteres)."}), 400
+    was_confirmed = participant.status == "active"
+    audience = participant.audience
     admin = current_admin()
     record_audit(admin, "delete_participant", participant.id, reason)
     photo = participant.photo_filename
@@ -559,7 +1069,12 @@ def delete_participant(participant_id):
     LookupChallenge.query.filter_by(participant_id=participant.id).delete(
         synchronize_session=False
     )
+    EmailNotification.query.filter_by(participant_id=participant.id).delete(
+        synchronize_session=False
+    )
     db.session.delete(participant)
+    promoted = promote_waitlist(audience) if was_confirmed else []
     db.session.commit()
     remove_photo(photo)
-    return jsonify({"ok": True})
+    delivery = deliver_pending_notifications() if promoted else {"failed": 0}
+    return jsonify({"ok": True, "promoted": len(promoted), "notification_failures": delivery["failed"]})

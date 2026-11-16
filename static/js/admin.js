@@ -2,16 +2,49 @@
   const $ = (selector) => document.querySelector(selector);
   let csrfToken = "";
   let audiences = [];
+  let events = [];
   let detector;
   let cameraStream;
   let activeCamera = false;
   let refreshTimer;
   let isAdmin = false;
+  let isInviteManager = false;
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
     })[char]);
+  }
+
+  function cpfDigits(value) {
+    return String(value || "").replace(/\D/g, "");
+  }
+
+  function formatCpf(value) {
+    return cpfDigits(value).slice(0, 11)
+      .replace(/^(\d{3})(\d)/, "$1.$2")
+      .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+      .replace(/\.(\d{3})(\d)/, ".$1-$2");
+  }
+
+  function validCpf(value) {
+    const cpf = cpfDigits(value);
+    if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+    for (let position = 9; position <= 10; position += 1) {
+      let sum = 0;
+      for (let index = 0; index < position; index += 1) {
+        sum += Number(cpf[index]) * (position + 1 - index);
+      }
+      let digit = (sum * 10) % 11;
+      if (digit === 10) digit = 0;
+      if (digit !== Number(cpf[position])) return false;
+    }
+    return true;
+  }
+
+  async function loadNotificationStatus() {
+    const data = await api("/api/admin/notifications");
+    return data;
   }
 
   async function api(url, options = {}) {
@@ -24,7 +57,12 @@
     const type = response.headers.get("content-type") || "";
     const body = type.includes("application/json") ? await response.json() : null;
     if (!response.ok) {
-      const error = new Error(body?.error || body?.message || "Não foi possível concluir a operação.");
+      const message = body?.error || body?.message || (
+        response.status >= 500
+          ? `Erro interno do servidor (HTTP ${response.status}). Consulte o log da aplicação.`
+          : "Não foi possível concluir a operação."
+      );
+      const error = new Error(message);
       error.status = response.status;
       error.code = body?.status;
       throw error;
@@ -37,25 +75,61 @@
     element.style.color = good ? "var(--green)" : "var(--red)";
   }
 
+  function setAppNotice(text, type = "error") {
+    const notice = $("#appNotice");
+    notice.textContent = text;
+    notice.className = text ? `app-notice ${type}` : "app-notice";
+    notice.hidden = !text;
+  }
+
+  function activityStatusLabel(status) {
+    return ({
+      preparing: "Em preparação",
+      open: "Inscrições abertas",
+      closed: "Inscrições encerradas",
+      cancelled: "Cancelada",
+      completed: "Concluída",
+      archived: "Arquivada",
+    })[status] || "Situação desconhecida";
+  }
+
+  function startRefreshTimer() {
+    window.clearInterval(refreshTimer);
+    refreshTimer = window.setInterval(() => reload().catch(showError), 15000);
+  }
+
   async function initialize() {
+    let current;
     try {
-      const current = await api("/api/admin/me");
-      csrfToken = current.csrf_token;
-      showAdmin(current.username, current.role);
-      await reload();
-      refreshTimer = window.setInterval(() => reload().catch(console.error), 15000);
-    } catch {
+      current = await api("/api/admin/me");
+    } catch (error) {
       $("#loginPanel").hidden = false;
       $("#adminApp").hidden = true;
+      if (error.status !== 401) setNotice($("#loginMessage"), error.message);
+      return;
     }
+    csrfToken = current.csrf_token;
+    showAdmin(current.username, current.role);
+    try {
+      await reload();
+    } catch (error) {
+      showError(error);
+    }
+    startRefreshTimer();
   }
 
   function showAdmin(username, role) {
     isAdmin = role === "admin";
+    isInviteManager = isAdmin || role === "organizer";
     $("#loginPanel").hidden = true;
     $("#adminApp").hidden = false;
-    $("#adminName").textContent = `${username} (${isAdmin ? "Administrador" : "Recepção"})`;
+    const roleLabel = { admin: "Administrador", organizer: "Organizador", reception: "Recepção" }[role] || "Usuário";
+    $("#adminName").textContent = `${username} (${roleLabel})`;
     document.querySelectorAll(".admin-only").forEach((section) => { section.hidden = !isAdmin; });
+    document.querySelectorAll(".invite-manager-only").forEach((section) => {
+      section.hidden = !isInviteManager;
+    });
+    activateAdminTab(isAdmin ? "audienceAdminTab" : isInviteManager ? "invitesAdminTab" : "receptionAdminTab");
   }
 
   $("#loginForm").addEventListener("submit", async (event) => {
@@ -69,10 +143,80 @@
       csrfToken = result.csrf_token;
       showAdmin(result.username, result.role);
       setNotice($("#loginMessage"), "");
-      await reload();
-      refreshTimer = window.setInterval(() => reload().catch(console.error), 15000);
+      try {
+        await reload();
+      } catch (error) {
+        showError(error);
+      }
+      startRefreshTimer();
     } catch (error) {
       setNotice($("#loginMessage"), error.message);
+    }
+  });
+
+  $("#registrationInviteCpf").addEventListener("input", (event) => {
+    event.target.value = formatCpf(event.target.value);
+  });
+
+  async function submitRegistrationInvite(replaceActive = false) {
+    const cpfField = $("#registrationInviteCpf");
+    const cpf = cpfDigits(cpfField.value);
+    if (!validCpf(cpf)) {
+      cpfField.setCustomValidity("Informe um CPF válido.");
+      cpfField.reportValidity();
+      cpfField.setCustomValidity("");
+      return;
+    }
+
+    const button = $("#createRegistrationInviteButton");
+    button.disabled = true;
+    button.textContent = "Gerando link…";
+    $("#replaceRegistrationInviteButton").hidden = true;
+    try {
+      const result = await api("/api/admin/convites", {
+        method: "POST",
+        body: JSON.stringify({ cpf, replace_active: replaceActive }),
+      });
+      $("#registrationInviteUrl").value = new URL(result.url, window.location.origin).href;
+      $("#registrationInviteResult").hidden = false;
+      $("#copyRegistrationInviteButton").hidden = false;
+      $("#replaceRegistrationInviteButton").hidden = true;
+      const expiresAt = new Date(result.expires_at).toLocaleString("pt-BR");
+      setNotice($("#registrationInviteMessage"), `Link gerado. Válido até ${expiresAt}.`, true);
+    } catch (error) {
+      if (error.status === 409 && !replaceActive) {
+        $("#registrationInviteUrl").value = "";
+        $("#registrationInviteResult").hidden = false;
+        $("#copyRegistrationInviteButton").hidden = true;
+        $("#replaceRegistrationInviteButton").hidden = false;
+      } else {
+        $("#registrationInviteResult").hidden = true;
+      }
+      setNotice($("#registrationInviteMessage"), error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Gerar link";
+    }
+  }
+
+  $("#registrationInviteForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await submitRegistrationInvite();
+  });
+
+  $("#replaceRegistrationInviteButton").addEventListener("click", async () => {
+    if (!window.confirm("Gerar outro link invalida imediatamente o convite ativo. Deseja continuar?")) return;
+    await submitRegistrationInvite(true);
+  });
+
+  $("#copyRegistrationInviteButton").addEventListener("click", async () => {
+    const field = $("#registrationInviteUrl");
+    try {
+      await navigator.clipboard.writeText(field.value);
+      setNotice($("#registrationInviteMessage"), "Link copiado.", true);
+    } catch (_error) {
+      field.select();
+      setNotice($("#registrationInviteMessage"), "Link selecionado. Copie-o manualmente.");
     }
   });
 
@@ -83,17 +227,107 @@
       csrfToken = "";
       $("#adminApp").hidden = true;
       $("#loginPanel").hidden = false;
+      setAppNotice("");
     } catch (error) {
       alert(error.message);
     }
   });
 
   async function reload() {
+    if (isInviteManager && !isAdmin) {
+      $("#lastUpdated").textContent = `Atualizado às ${new Date().toLocaleTimeString("pt-BR")}`;
+      setAppNotice("");
+      return;
+    }
     await loadAudiences();
     const tasks = [loadDashboard()];
-    if (isAdmin) tasks.push(loadPeople(), loadHistory());
+    let notificationTask;
+    if (isAdmin) {
+      await loadEvents();
+      tasks.push(loadPeople(), loadHistory(), loadEventPeople());
+      notificationTask = loadNotificationStatus();
+    }
     await Promise.all(tasks);
+    $("#lastUpdated").textContent = `Atualizado às ${new Date().toLocaleTimeString("pt-BR")}`;
+    setAppNotice("");
+    if (notificationTask) {
+      const notifications = await notificationTask;
+      if (notifications.failed) {
+        setAppNotice(
+          `${notifications.failed} e-mail(s) não foram enviados. Verifique a configuração SMTP ou execute novamente o processamento de notificações.`,
+        );
+      }
+    }
   }
+
+  function activateAdminTab(tabId) {
+    const selectedButton = document.querySelector(`[data-admin-tab="${tabId}"]`);
+    if (!selectedButton || selectedButton.hidden) return;
+    document.querySelectorAll("[data-admin-tab]").forEach((tab) => {
+      const selected = tab === selectedButton;
+      tab.classList.toggle("active", selected);
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+    });
+    document.querySelectorAll(".admin-tab-content").forEach((panel) => {
+      panel.hidden = panel.id !== tabId;
+    });
+    if (tabId !== "receptionAdminTab") stopScanner();
+    if (tabId === "eventAdminTab") loadEventPeople().catch(showError);
+    if (tabId === "receptionAdminTab") $("#scanCode").focus({ preventScroll: true });
+  }
+
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.hidden) return;
+      activateAdminTab(button.dataset.adminTab);
+    });
+    button.addEventListener("keydown", (event) => {
+      const tabs = [...document.querySelectorAll("[data-admin-tab]:not([hidden])")];
+      const currentIndex = tabs.indexOf(button);
+      const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      if (!direction) return;
+      event.preventDefault();
+      const next = tabs[(currentIndex + direction + tabs.length) % tabs.length];
+      activateAdminTab(next.dataset.adminTab);
+      next.focus();
+    });
+  });
+
+  $("#refreshAllButton").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = "Atualizando…";
+    try {
+      await reload();
+    } catch (error) {
+      showError(error);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Atualizar dados";
+    }
+  });
+
+  $("#processNotificationsButton").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = "Processando…";
+    try {
+      const result = await api("/api/admin/notifications/process", { method: "POST", body: "{}" });
+      setAppNotice(
+        result.failed
+          ? `${result.sent} e-mail(s) enviados; ${result.failed} ainda pendente(s). Verifique o SMTP.`
+          : `${result.sent} e-mail(s) enviados. ${result.queued} lembrete(s) foram enfileirados.`,
+        result.failed ? "error" : "success",
+      );
+      await reload();
+    } catch (error) {
+      showError(error);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Processar e-mails";
+    }
+  });
 
   async function loadAudiences() {
     const selectedFilter = $("#filterAudience").value;
@@ -122,13 +356,17 @@
       const schedule = document.createElement("span");
       schedule.textContent = `${new Date(`${item.date}T12:00:00`).toLocaleDateString("pt-BR")} · ${item.time}`;
       const state = document.createElement("span");
-      state.className = `audience-status ${item.active ? "open" : "closed"}`;
-      state.textContent = item.active ? "Inscrições abertas" : "Inscrições encerradas";
+      state.className = `audience-status ${item.status === "open" ? "open" : "closed"}`;
+      const capacity = item.capacity === null
+        ? `${item.confirmed} confirmados`
+        : `${item.confirmed}/${item.capacity} vagas · ${item.available_spots} disponíveis`;
+      state.textContent = `${activityStatusLabel(item.status)} · ${capacity} · ${item.waitlisted} na espera`;
       details.append(label, schedule, state);
       const toggle = document.createElement("button");
       toggle.type = "button";
       toggle.className = "secondary";
-      toggle.textContent = item.active ? "Encerrar inscrições" : "Reabrir inscrições";
+      toggle.textContent = item.status === "open" ? "Encerrar inscrições" : "Abrir inscrições";
+      toggle.disabled = ["cancelled", "archived", "completed"].includes(item.status);
       toggle.setAttribute("aria-label", `${toggle.textContent}: ${item.name}`);
       toggle.addEventListener("click", async () => {
         try {
@@ -156,6 +394,8 @@
     form.elements.namedItem("name").value = audience.name;
     form.elements.namedItem("date").value = audience.date;
     form.elements.namedItem("time").value = audience.time;
+    form.elements.namedItem("capacity").value = audience.capacity ?? "";
+    form.elements.namedItem("status").value = audience.status;
     setNotice($("#audienceEditMessage"), "");
     $("#audienceEditDialog").showModal();
   }
@@ -193,12 +433,254 @@
     }
   });
 
+  async function loadEvents() {
+    const selectedId = $("#eventRosterSelect").value;
+    events = await api("/api/admin/events");
+    const options = ['<option value="">Selecione um evento</option>', ...events.map((item) =>
+      `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)} · ${escapeHtml(item.date)}</option>`) ];
+    $("#eventRosterSelect").innerHTML = options.join("");
+    $("#eventRosterSelect").value = events.some((item) => item.id === selectedId) ? selectedId : "";
+    if (!events.length) {
+      const empty = document.createElement("p");
+      empty.className = "audiences-empty";
+      empty.textContent = "Nenhum evento cadastrado. Crie um evento acima para abrir inscrições.";
+      $("#eventsList").replaceChildren(empty);
+      $("#eventPeopleRows").innerHTML = '<tr class="empty-row"><td colspan="7">Cadastre um evento para consultar inscritos.</td></tr>';
+      updateEventMetrics();
+      return;
+    }
+    $("#eventsList").replaceChildren(...events.map((item) => {
+      const chip = document.createElement("div");
+      chip.className = "audience-chip";
+      const details = document.createElement("div");
+      details.className = "audience-details";
+      const title = document.createElement("strong");
+      title.textContent = item.name;
+      const date = document.createElement("span");
+      const hours = item.end_time ? `${item.time}–${item.end_time}` : item.time;
+      date.textContent = `${new Date(`${item.date}T12:00:00`).toLocaleDateString("pt-BR")} · ${hours} · ${item.location}`;
+      const status = document.createElement("span");
+      status.className = `audience-status ${item.status === "open" ? "open" : "closed"}`;
+      const capacity = item.capacity === null
+        ? `${item.confirmed} confirmados`
+        : `${item.confirmed}/${item.capacity} vagas · ${item.available_spots} disponíveis`;
+      status.textContent = `${activityStatusLabel(item.status)} · ${capacity} · ${item.waitlisted} na espera`;
+      details.append(title, date, status);
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "secondary";
+      edit.textContent = "Editar";
+      edit.addEventListener("click", () => openEventEdit(item));
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "secondary";
+      toggle.textContent = item.status === "open" ? "Encerrar inscrições" : "Abrir inscrições";
+      toggle.disabled = ["cancelled", "archived", "completed"].includes(item.status);
+      toggle.addEventListener("click", async () => {
+        try {
+          await api(`/api/admin/events/${encodeURIComponent(item.id)}`, {
+            method: "PATCH", body: JSON.stringify({ active: !item.active }),
+          });
+          await reload();
+        } catch (error) {
+          setNotice($("#eventMessage"), error.message);
+        }
+      });
+      const select = document.createElement("button");
+      select.type = "button";
+      select.className = "primary";
+      select.textContent = "Ver inscritos";
+      select.addEventListener("click", () => {
+        $("#eventRosterSelect").value = item.id;
+        loadEventPeople().catch(showError);
+        $("#eventRosterSelect").focus();
+      });
+      chip.append(details, edit, toggle, select);
+      return chip;
+    }));
+  }
+
+  function openEventEdit(item) {
+    const form = $("#eventEditForm");
+    for (const [key, value] of Object.entries({
+      id: item.id, name: item.name, date: item.date, time: item.time,
+      end_time: item.end_time || "", location: item.location,
+      capacity: item.capacity ?? "", status: item.status,
+    })) form.elements.namedItem(key).value = value;
+    setNotice($("#eventEditMessage"), "");
+    $("#eventEditDialog").showModal();
+  }
+
+  $("#eventForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form));
+    try {
+      const created = await api("/api/admin/events", {
+        method: "POST", body: JSON.stringify(values),
+      });
+      form.reset();
+      $("#eventRosterSelect").value = created.id;
+      setNotice($("#eventMessage"), "Evento cadastrado. As inscrições já estão disponíveis.", true);
+      await reload();
+    } catch (error) {
+      setNotice($("#eventMessage"), error.message);
+    }
+  });
+
+  $("#cancelEventEdit").addEventListener("click", () => $("#eventEditDialog").close());
+  $("#eventEditForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form));
+    const id = values.id;
+    delete values.id;
+    try {
+      await api(`/api/admin/events/${encodeURIComponent(id)}`, {
+        method: "PATCH", body: JSON.stringify(values),
+      });
+      $("#eventEditDialog").close();
+      setNotice($("#eventMessage"), "Evento atualizado.", true);
+      await reload();
+    } catch (error) {
+      setNotice($("#eventEditMessage"), error.message);
+    }
+  });
+
+  function eventParticipantFilters() {
+    const params = new URLSearchParams();
+    if ($("#eventRosterSelect").value) params.set("event_id", $("#eventRosterSelect").value);
+    if ($("#searchEventPeople").value.trim()) params.set("q", $("#searchEventPeople").value.trim());
+    if ($("#filterEventStatus").value) params.set("status", $("#filterEventStatus").value);
+    return params.toString();
+  }
+
+  function updateEventMetrics(summary = {}) {
+    $("#eventRegistered").textContent = summary.registered || 0;
+    $("#eventPresent").textContent = summary.present || 0;
+    $("#eventAbsent").textContent = summary.absent || 0;
+    $("#eventCancelled").textContent = summary.cancelled || 0;
+    $("#eventWaitlisted").textContent = summary.waitlisted || 0;
+  }
+
+  async function loadEventPeople() {
+    const eventId = $("#eventRosterSelect").value;
+    if (!eventId) {
+      window.eventPeopleById = {};
+      updateEventMetrics();
+      $("#eventResultCount").textContent = "Selecione um evento para consultar os inscritos.";
+      $("#eventPeopleRows").innerHTML = '<tr class="empty-row"><td colspan="7">Selecione um evento para consultar os inscritos.</td></tr>';
+      return;
+    }
+    const query = eventParticipantFilters();
+    const [people, summary] = await Promise.all([
+      api(`/api/admin/event-participants?${query}`),
+      api(`/api/admin/events/${encodeURIComponent(eventId)}/dashboard`),
+    ]);
+    updateEventMetrics(summary);
+    $("#eventResultCount").textContent = `${summary.registered} confirmados · ${summary.waitlisted || 0} na lista de espera · ${
+      summary.available_spots === null ? "sem limite de vagas" : `${summary.available_spots} vagas disponíveis`
+    }`;
+    $("#eventPeopleRows").innerHTML = people.map((person) => {
+      const situation = person.status === "waitlisted"
+        ? "waitlisted" : person.status !== "active" ? "cancelled" : person.checked_at ? "present" : "absent";
+      const text = situation === "present" ? "Presente"
+        : situation === "waitlisted" ? "Lista de espera"
+          : situation === "cancelled" ? "Cancelada" : "Ausente";
+      return `<tr>
+        <td data-label="Nome / CPF"><strong>${escapeHtml(person.name)}</strong><br>${escapeHtml(person.cpf)}</td>
+        <td data-label="Categoria">${escapeHtml(person.category)}</td>
+        <td data-label="Município">${escapeHtml(person.city)}</td>
+        <td data-label="Cargo">${escapeHtml(person.role)}</td>
+        <td data-label="Entrada">${person.checked_at ? escapeHtml(new Date(person.checked_at).toLocaleString("pt-BR")) : "—"}</td>
+        <td data-label="Situação"><span class="status ${situation}">${text}</span></td>
+        <td data-label="Ações"><div class="row-actions">
+          <button data-event-action="credential" data-id="${escapeHtml(person.id)}" ${person.status !== "active" ? "disabled" : ""}>Credencial</button>
+          <button data-event-action="cancel" data-id="${escapeHtml(person.id)}" ${situation === "cancelled" ? "disabled" : ""}>Cancelar</button>
+          <button data-event-action="delete" data-id="${escapeHtml(person.id)}">Excluir dados</button>
+        </div></td></tr>`;
+    }).join("") || '<tr class="empty-row"><td colspan="7">Nenhum participante encontrado.</td></tr>';
+    $("#eventResultCount").textContent += ` · ${people.length} ${people.length === 1 ? "registro exibido" : "registros exibidos"}`;
+    window.eventPeopleById = Object.fromEntries(people.map((person) => [person.id, person]));
+  }
+
+  $("#eventRosterSelect").addEventListener("change", () => loadEventPeople().catch(showError));
+  ["searchEventPeople", "filterEventStatus"].forEach((id) => {
+    $(`#${id}`).addEventListener(id === "searchEventPeople" ? "input" : "change", debounce(
+      () => loadEventPeople().catch(showError), 250,
+    ));
+  });
+  $("#refreshEventPeople").addEventListener("click", () => loadEventPeople().catch(showError));
+  $("#clearEventFilters").addEventListener("click", () => {
+    $("#searchEventPeople").value = "";
+    $("#filterEventStatus").value = "";
+    loadEventPeople().catch(showError);
+  });
+  $("#exportEventCsv").addEventListener("click", () => {
+    const eventId = $("#eventRosterSelect").value;
+    if (eventId) window.location.assign(`/api/admin/events/${encodeURIComponent(eventId)}/export`);
+  });
+  $("#printEventList").addEventListener("click", () => {
+    document.body.classList.add("print-event-list");
+    window.print();
+  });
+  $("#printAudienceList").addEventListener("click", () => {
+    document.body.classList.add("print-audience-list");
+    window.print();
+  });
+  window.addEventListener("afterprint", () => document.body.classList.remove("print-event-list"));
+  window.addEventListener("afterprint", () => document.body.classList.remove("print-audience-list"));
+  $("#eventPeopleRows").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-event-action]");
+    if (!button) return;
+    const person = window.eventPeopleById?.[button.dataset.id];
+    if (!person) return;
+    if (button.dataset.eventAction === "credential") {
+      try {
+        const data = await api(`/api/admin/event-participants/${encodeURIComponent(person.id)}/credential`);
+        $("#credentialName").textContent = `${data.participant.name} · ${data.participant.event.name}`;
+        $("#credentialCode").textContent = data.credential;
+        const response = await fetch("/api/credentials/qr", {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ credential: data.credential }),
+        });
+        if (!response.ok) throw new Error("Não foi possível gerar o QR Code.");
+        $("#credentialQr").src = URL.createObjectURL(await response.blob());
+        $("#credentialDialog").showModal();
+      } catch (error) { alert(error.message); }
+    }
+    if (button.dataset.eventAction === "cancel") {
+      const reason = prompt(`Motivo para cancelar a credencial de ${person.name}:`);
+      if (!reason) return;
+      try {
+        await api(`/api/admin/event-participants/${encodeURIComponent(person.id)}/cancel`, {
+          method: "POST", body: JSON.stringify({ reason }),
+        });
+        await reload();
+      } catch (error) { alert(error.message); }
+    }
+    if (button.dataset.eventAction === "delete") {
+      const reason = prompt(`Justificativa para excluir definitivamente os dados de ${person.name}:`);
+      if (!reason) return;
+      if (!confirm("A exclusão apagará fotografia, contatos, CPF e credencial do evento. Continuar?")) return;
+      try {
+        await api(`/api/admin/event-participants/${encodeURIComponent(person.id)}`, {
+          method: "DELETE", body: JSON.stringify({ reason }),
+        });
+        await reload();
+      } catch (error) { alert(error.message); }
+    }
+  });
+
   async function loadDashboard() {
     const id = $("#dashboardAudience").value;
     const data = await api(`/api/admin/dashboard${id ? `?audience_id=${encodeURIComponent(id)}` : ""}`);
     $("#metricRegistered").textContent = data.registered;
     $("#metricPresent").textContent = data.present;
     $("#metricAbsent").textContent = data.absent;
+    $("#metricWaitlisted").textContent = data.waitlisted || 0;
+    $("#metricCancelled").textContent = data.cancelled || 0;
     $("#metricEntries").textContent = data.validated_entries;
     $("#metricInvalid").textContent = data.invalid_attempts;
     $("#metricPercent").textContent = `${data.attendance_percent}%`;
@@ -223,8 +705,11 @@
     const query = participantFilters();
     const people = await api(`/api/admin/participants${query ? `?${query}` : ""}`);
     const rows = people.map((item) => {
-      const situation = item.status !== "active" ? "cancelled" : item.checked_at ? "present" : "absent";
-      const text = situation === "present" ? "Presente" : situation === "cancelled" ? "Cancelada" : "Ausente";
+      const situation = item.status === "waitlisted"
+        ? "waitlisted" : item.status !== "active" ? "cancelled" : item.checked_at ? "present" : "absent";
+      const text = situation === "present" ? "Presente"
+        : situation === "waitlisted" ? "Lista de espera"
+          : situation === "cancelled" ? "Cancelada" : "Ausente";
       return `<tr>
         <td data-label="Nome / CPF"><strong>${escapeHtml(item.name)}</strong><br>${escapeHtml(item.cpf)}</td>
         <td data-label="Categoria">${escapeHtml(item.category)}</td>
@@ -242,6 +727,7 @@
         </div></td></tr>`;
     });
     $("#peopleRows").innerHTML = rows.join("") || '<tr class="empty-row"><td colspan="8">Nenhum participante encontrado.</td></tr>';
+    $("#peopleResultCount").textContent = `${people.length} ${people.length === 1 ? "participante encontrado" : "participantes encontrados"}`;
     window.peopleById = Object.fromEntries(people.map((person) => [person.id, person]));
   }
 
@@ -263,6 +749,13 @@
     }, 250));
   });
   $("#refreshPeople").addEventListener("click", () => reload().catch(showError));
+  $("#clearPeopleFilters").addEventListener("click", () => {
+    $("#searchPeople").value = "";
+    $("#filterAudience").value = "";
+    $("#filterDate").value = "";
+    $("#filterStatus").value = "";
+    reload().catch(showError);
+  });
   $("#peopleRows").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
@@ -368,7 +861,7 @@
       showScan(
         "Entrada liberada",
         "good",
-        `${result.participant.name} · ${result.participant.audience.name}`,
+        `${result.participant.name} · ${result.participant.audience?.name || result.participant.event?.name}`,
       );
       await reload();
     } catch (error) {
@@ -499,7 +992,7 @@
   }
 
   function showError(error) {
-    setNotice($("#peopleMessage"), error.message);
+    setAppNotice(error.message || "Não foi possível atualizar os dados.");
   }
 
   initialize();

@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -44,6 +45,8 @@ def create_app(test_config=None):
         SMTP_PASSWORD=os.getenv("SMTP_PASSWORD"),
         SMTP_FROM=os.getenv("SMTP_FROM"),
         SMTP_USE_TLS=os.getenv("SMTP_USE_TLS", "1") == "1",
+        ACTIVITY_TIMEZONE=os.getenv("ACTIVITY_TIMEZONE", "America/Bahia"),
+        REGISTRATION_INVITE_DAYS=int(os.getenv("REGISTRATION_INVITE_DAYS", "7")),
     )
     if test_config:
         app.config.update(test_config)
@@ -53,6 +56,8 @@ def create_app(test_config=None):
         raise RuntimeError("APP_ENCRYPTION_KEY precisa ser definida no ambiente.")
     if not app.config["DATA_HASH_KEY"] or len(app.config["DATA_HASH_KEY"]) < 32:
         raise RuntimeError("DATA_HASH_KEY precisa ser uma chave separada com ao menos 32 caracteres.")
+    if app.config["REGISTRATION_INVITE_DAYS"] < 1:
+        raise RuntimeError("REGISTRATION_INVITE_DAYS precisa ser maior que zero.")
     try:
         Fernet(app.config["APP_ENCRYPTION_KEY"].encode("ascii"))
     except (ValueError, UnicodeEncodeError) as error:
@@ -85,6 +90,20 @@ def create_app(test_config=None):
     app.register_blueprint(public_bp)
     app.register_blueprint(admin_bp)
 
+    @app.cli.command("pleitos-process-notifications")
+    def process_notifications():
+        """Queue due activity reminders and deliver pending email notifications."""
+        from .services import deliver_pending_notifications, queue_due_reminders
+
+        queued = queue_due_reminders()
+        result = deliver_pending_notifications()
+        print(
+            f"Lembretes enfileirados: {queued}; e-mails enviados: {result['sent']}; "
+            f"pendentes com falha: {result['failed']}."
+        )
+        if result["failed"]:
+            raise RuntimeError("Há notificações pendentes; confira o log e a configuração SMTP.")
+
     @app.after_request
     def secure_response(response):
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
@@ -98,8 +117,14 @@ def create_app(test_config=None):
             "connect-src 'self' https://servicodados.ibge.gov.br; "
             "media-src 'self' blob:; frame-ancestors 'none'; form-action 'self'",
         )
-        if request.path.startswith("/api/") or request.path.startswith("/admin"):
+        if (
+            request.path.startswith("/api/")
+            or request.path.startswith("/admin")
+            or request.path.startswith("/cadastro/")
+        ):
             response.headers["Cache-Control"] = "no-store"
+        if request.path.startswith("/cadastro/"):
+            response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
     @app.get("/")
@@ -117,8 +142,26 @@ def create_app(test_config=None):
         )
         html = html.replace(
             "</div></header>",
-            '</div><a class="btn home-link" href="/">← Início</a></header>',
+            '</div><a class="home-link" href="/">Início</a></header>',
             1,
+        )
+        html = re.sub(
+            r'<div\b(?=[^>]*class="viewtoggle public-viewtoggle")[^>]*>.*?</div>',
+            "",
+            html,
+            count=1,
+            flags=re.DOTALL,
+        )
+        html = re.sub(
+            r"<script>function setView\(mode\).*?</script>",
+            '<script>const participantLayout=window.matchMedia("(max-width: 650px)");'
+            'function applyParticipantLayout(){document.body.classList.toggle("mobile",participantLayout.matches);}'
+            'applyParticipantLayout();'
+            'if(participantLayout.addEventListener){participantLayout.addEventListener("change",applyParticipantLayout);}'
+            'else{participantLayout.addListener(applyParticipantLayout);}</script>',
+            html,
+            count=1,
+            flags=re.DOTALL,
         )
         html = html.replace(
             '<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>',
@@ -142,6 +185,17 @@ def create_app(test_config=None):
         response = make_response(html)
         response.headers["Cache-Control"] = "no-store"
         return response
+
+    @app.get("/cadastro/<token>")
+    def invite_registration_page(token):
+        response = make_response(render_template("invite_registration.html", token=token))
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    @app.get("/evento")
+    def event_app():
+        return render_template("event.html")
 
     @app.get("/admin")
     def admin_app():

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#8f0808">
+  <title>PLEITOS • Inscrição em eventos</title>
+  <link rel="stylesheet" href="/static/css/event.css">
+  <script src="/static/js/event.js" defer></script>
+</head>
+<body>
+  <main class="event-shell">
+    <header class="event-header">
+      <a class="brand-mark" href="/" aria-label="Voltar ao início">S</a>
+      <div>
+        <p class="eyebrow">SERIN • PLEITOS</p>
+        <h1>Inscrição em eventos</h1>
+        <p>Cadastre-se e receba sua credencial digital para entrada.</p>
+      </div>
+      <a class="home-link" href="/">Início</a>
+    </header>
+
+    <section class="event-notice" id="eventStatus" role="status" aria-live="polite"></section>
+
+    <section class="event-panel">
+      <h2>Cadastro do participante</h2>
+      <p class="muted">Os cadastros de evento são independentes das inscrições de audiência.</p>
+      <form id="eventRegistrationForm">
+        <div class="form-grid">
+          <label class="full">Evento *
+            <select name="event_id" id="registrationEvent" required><option value="">Carregando eventos…</option></select>
+          </label>
+          <label>CPF *
+            <input name="cpf" id="eventCpf" inputmode="numeric" autocomplete="off" maxlength="14" required>
+          </label>
+          <label>Tipo de participante *
+            <select name="category" required>
+              <option value="">Selecione</option>
+              <option>Convidado</option><option>Deputado</option><option>Imprensa</option>
+              <option>Liderança</option><option>Prefeito</option><option>Senador</option><option>Vereador</option>
+            </select>
+          </label>
+          <label>Nome completo *
+            <input name="name" maxlength="150" autocomplete="name" required>
+          </label>
+          <label>Município *
+            <input name="city" maxlength="100" autocomplete="address-level2" required>
+          </label>
+          <label>Cargo / função *
+            <input name="role" maxlength="120" required>
+          </label>
+          <label>Contato / WhatsApp *
+            <input name="phone" id="eventPhone" inputmode="tel" maxlength="20" autocomplete="tel" required>
+          </label>
+          <label>Instagram
+            <input name="instagram" maxlength="60" placeholder="@seuusuario">
+          </label>
+          <label>E-mail *
+            <input name="email" type="email" maxlength="254" autocomplete="email" required>
+          </label>
+          <div class="full photo-control">
+            <strong>Fotografia para a credencial *</strong>
+            <p class="muted">Tire uma foto com a câmera ou selecione uma imagem JPEG, PNG ou WebP de até 5 MB.</p>
+            <div class="photo-actions">
+              <button type="button" class="secondary" id="startPhotoCamera">Ativar câmera</button>
+              <button type="button" class="secondary" id="capturePhoto" hidden>Tirar foto</button>
+              <button type="button" class="secondary" id="retakePhoto" hidden>Tirar novamente</button>
+              <label class="file-button">Selecionar foto<input id="eventPhotoFile" type="file" accept="image/jpeg,image/png,image/webp" capture="user"></label>
+            </div>
+            <video id="eventPhotoVideo" playsinline muted hidden></video>
+            <img id="eventPhotoPreview" alt="Prévia da fotografia selecionada" hidden>
+            <p id="photoStatus" class="field-message" role="status"></p>
+          </div>
+          <p class="full privacy-notice">Os dados de identificação, contato e fotografia serão usados pela equipe autorizada para organizar o evento, emitir a credencial e registrar a presença. A fotografia não é submetida a reconhecimento biométrico automatizado. O prazo de retenção e o canal para exercício dos direitos do titular devem seguir a política institucional vigente.</p>
+          <label class="privacy-check full">
+            <input type="checkbox" name="consent" id="eventConsent" required>
+            <span>Li e estou ciente do aviso de privacidade e do uso da fotografia para identificação visual e controle de presença neste evento.</span>
+          </label>
+        </div>
+        <button class="primary submit-button" type="submit" id="eventSubmit">Finalizar e gerar credencial</button>
+      </form>
+    </section>
+
+    <section class="event-panel">
+      <h2>Já possui inscrição?</h2>
+      <p class="muted">Confirme sua identidade pelo código enviado ao e-mail cadastrado para recuperar a credencial.</p>
+      <form id="eventLookupForm" class="lookup-form">
+        <label>Evento<select id="lookupEvent" required><option value="">Selecione o evento</option></select></label>
+        <label>CPF<input id="lookupCpf" inputmode="numeric" autocomplete="off" maxlength="14" required></label>
+        <button type="submit" class="secondary" id="requestLookupCode">Enviar código</button>
+        <label id="lookupCodeLabel" hidden>Código de confirmação
+          <input id="lookupCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+        </label>
+        <button type="button" class="primary" id="verifyLookupCode" hidden>Confirmar código</button>
+      </form>
+      <p class="field-message" id="lookupMessage" role="status"></p>
+    </section>
+
+    <section class="event-panel credential-panel" id="credentialPanel" hidden>
+      <h2>Sua credencial do evento</h2>
+      <div class="credential-content">
+        <img id="eventCredentialQr" alt="QR Code da credencial">
+        <div>
+          <strong id="credentialParticipant"></strong>
+          <p id="credentialDetails"></p>
+          <p class="credential-code" id="credentialCode"></p>
+          <button type="button" class="secondary" id="printCredential">Imprimir credencial</button>
+        </div>
+      </div>
+    </section>
+
+    <footer>Secretaria de Relações Institucionais • SERIN</footer>
+  </main>
+</body>
+</html>

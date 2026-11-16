@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#8f0808">
+  <title>PLEITOS • Cadastro por convite</title>
+  <link rel="stylesheet" href="/static/css/event.css">
+  <script src="/static/js/invite-registration.js" defer></script>
+</head>
+<body data-invite-token="{{ token }}">
+  <main class="event-shell">
+    <header class="event-header">
+      <a class="brand-mark" href="/" aria-label="Voltar ao início">S</a>
+      <div>
+        <p class="eyebrow">SERIN • PLEITOS</p>
+        <h1>Cadastro por convite</h1>
+        <p>Preencha seus dados para concluir a inscrição.</p>
+      </div>
+      <a class="home-link" href="/">Início</a>
+    </header>
+
+    <section class="event-notice info" id="inviteStatus" role="status" aria-live="polite">
+      Validando o convite…
+    </section>
+
+    <section class="event-panel" id="inviteFormPanel" hidden>
+      <h2>Cadastro do participante</h2>
+      <p class="muted">Escolha uma atividade com inscrições abertas e informe seus dados.</p>
+      <form id="inviteRegistrationForm">
+        <div class="form-grid">
+          <label>Tipo de atividade *
+            <select id="inviteActivityType" required>
+              <option value="">Selecione</option>
+              <option value="audience">Audiência</option>
+              <option value="event">Evento</option>
+            </select>
+          </label>
+          <label>Atividade *
+            <select name="activity_id" id="inviteActivity" required disabled>
+              <option value="">Selecione primeiro o tipo</option>
+            </select>
+          </label>
+          <label>CPF
+            <input id="inviteCpf" name="cpf" inputmode="numeric" autocomplete="off" readonly aria-readonly="true" required>
+          </label>
+          <label>Tipo de participante *
+            <select name="category" required>
+              <option value="">Selecione</option>
+              <option>Convidado</option><option>Deputado</option><option>Imprensa</option>
+              <option>Liderança</option><option>Prefeito</option><option>Senador</option><option>Vereador</option>
+            </select>
+          </label>
+          <label>Nome completo *
+            <input name="name" maxlength="150" autocomplete="name" required>
+          </label>
+          <label>Município *
+            <input name="city" maxlength="100" autocomplete="address-level2" required>
+          </label>
+          <label>Cargo / função *
+            <input name="role" maxlength="120" required>
+          </label>
+          <label>Contato / WhatsApp *
+            <input name="phone" inputmode="tel" maxlength="20" autocomplete="tel" required>
+          </label>
+          <label>E-mail *
+            <input name="email" type="email" maxlength="254" autocomplete="email" required>
+          </label>
+          <label>Organização
+            <input name="organization" maxlength="160">
+          </label>
+          <label>Instagram
+            <input name="instagram" maxlength="60" placeholder="@seuusuario">
+          </label>
+          <label class="full">Fotografia para a credencial *
+            <input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required>
+          </label>
+          <p class="full privacy-notice">Os dados de identificação, contato e fotografia serão usados pela equipe autorizada para organizar a atividade, emitir a credencial e registrar a presença. A fotografia não é submetida a reconhecimento biométrico automatizado. O prazo de retenção e o canal para exercício dos direitos do titular devem seguir a política institucional vigente.</p>
+          <label class="privacy-check full">
+            <input type="checkbox" name="consent" value="true" required>
+            <span>Li e estou ciente do aviso de privacidade e do uso da fotografia para identificação visual e controle de presença.</span>
+          </label>
+        </div>
+        <button class="primary submit-button" type="submit" id="inviteSubmit">Finalizar cadastro</button>
+      </form>
+    </section>
+
+    <section class="event-panel" id="inviteSuccess" hidden>
+      <h2 id="inviteSuccessTitle">Cadastro concluído</h2>
+      <p id="inviteSuccessMessage" class="muted"></p>
+      <p id="inviteCredential" class="credential-code"></p>
+    </section>
+
+    <footer>Secretaria de Relações Institucionais • SERIN</footer>
+  </main>
+</body>
+</html>

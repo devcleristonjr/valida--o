@@ -6,10 +6,15 @@
 .institutional-header > .home-link {
   flex: 0 0 auto;
   align-self: center;
-  border-color: #ffffffb3;
-  background: #fff;
+  min-height: 40px;
+  padding: 8px 13px;
+  border: 1px solid #ffffffb3;
+  border-radius: 10px;
+  background: white;
   color: #870000;
+  font-weight: 700;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .institutional-header > .home-link:hover {
@@ -24,6 +29,7 @@
 
 @media (max-width: 650px) {
   .institutional-header > .home-link {
+    min-height: 44px;
     margin-inline: auto;
   }
 }

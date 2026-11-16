@@ -94,7 +94,7 @@ body {
 
 .access-options {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
   margin-top: 30px;
 }
@@ -156,10 +156,20 @@ body {
 }
 
 .card-copy strong {
-  font-size: 17px;
+  font-size: 16px;
+  line-height: 1.35;
 }
 
-.card-copy > span:not(.card-action) {
+.card-kicker {
+  margin-bottom: 4px;
+  color: var(--wine);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.card-copy > .card-description {
   margin-top: 7px;
   color: var(--muted);
   font-size: 13px;
@@ -190,6 +200,12 @@ footer {
   color: var(--muted);
   font-size: 12px;
   text-align: center;
+}
+
+@media (max-width: 800px) {
+  .access-options {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 620px) {

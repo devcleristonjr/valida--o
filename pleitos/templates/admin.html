@@ -11,8 +11,8 @@
 <body>
   <header class="masthead">
     <div class="brand-mark" aria-hidden="true">S</div>
-    <div><p class="eyebrow">SERIN • PLEITOS</p><h1>Gestão de audiências</h1></div>
-    <a class="public-link" href="/">Início</a>
+    <div><p class="eyebrow">SERIN • PLEITOS</p><h1>Gestão de audiências e eventos</h1></div>
+    <a class="home-link" href="/">Início</a>
   </header>
   <main class="wrap">
     <section class="panel login-panel" id="loginPanel">
@@ -29,15 +29,75 @@
     <div id="adminApp" hidden>
       <div class="toolbar">
         <p>Usuário: <strong id="adminName"></strong></p>
-        <button id="logoutButton" class="secondary">Sair</button>
+        <div class="toolbar-actions">
+          <span id="lastUpdated" class="last-updated">Dados ainda não atualizados</span>
+          <button id="processNotificationsButton" class="secondary admin-only" type="button" hidden>Processar e-mails</button>
+          <button id="refreshAllButton" class="secondary" type="button">Atualizar dados</button>
+          <button id="logoutButton" class="secondary" type="button">Sair</button>
+        </div>
       </div>
 
+      <p id="appNotice" class="app-notice" role="status" aria-live="polite"></p>
+
+      <nav class="admin-tabs" role="tablist" aria-label="Áreas de gestão">
+        <button type="button" class="active" role="tab" data-admin-tab="audienceAdminTab" aria-controls="audienceAdminTab" aria-selected="true">Audiências</button>
+        <button type="button" class="admin-only" role="tab" data-admin-tab="eventAdminTab" aria-controls="eventAdminTab" aria-selected="false">Eventos</button>
+        <button type="button" class="invite-manager-only" role="tab" data-admin-tab="invitesAdminTab" aria-controls="invitesAdminTab" aria-selected="false" hidden>Convites</button>
+        <button type="button" role="tab" data-admin-tab="receptionAdminTab" aria-controls="receptionAdminTab" aria-selected="false">Recepção</button>
+      </nav>
+
+      <div id="receptionAdminTab" class="admin-tab-content" role="tabpanel" hidden>
+      <section class="panel">
+        <div class="section-title"><div><h2>Recepção e validação</h2><p>Use a câmera, um leitor USB/Bluetooth ou digite o código da credencial. Audiências e eventos são aceitos.</p></div></div>
+        <p class="scanner-hint">Dica: leitores USB/Bluetooth funcionam como teclado. Clique no campo abaixo e leia a credencial.</p>
+        <div class="scanner-layout">
+          <div>
+            <video id="scannerVideo" playsinline muted></video>
+            <div class="actions">
+              <button id="cameraButton" class="secondary" type="button">Ativar câmera</button>
+              <button id="stopCameraButton" class="secondary" type="button" hidden>Parar câmera</button>
+            </div>
+          </div>
+          <form id="scanForm">
+            <label>Código da credencial<input id="scanCode" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" aria-label="Código da credencial"></label>
+            <button class="primary" type="submit">Validar entrada</button>
+            <div id="scanMessage" role="status" aria-live="assertive" aria-atomic="true" class="scan-message"></div>
+          </form>
+        </div>
+      </section>
+      </div>
+
+      <div id="invitesAdminTab" class="admin-tab-content" role="tabpanel" hidden>
+      <section class="panel invite-manager-only">
+        <div class="section-title"><div><h2>Convite para cadastro</h2><p>Gere um link individual de inscrição. O CPF não será incluído na URL.</p></div></div>
+        <form id="registrationInviteForm" class="inline-form">
+          <label>CPF
+            <input id="registrationInviteCpf" name="cpf" inputmode="numeric" autocomplete="off" maxlength="14" aria-describedby="registrationInviteMessage" required>
+          </label>
+          <button class="primary" type="submit" id="createRegistrationInviteButton">Gerar link</button>
+        </form>
+        <p class="message" id="registrationInviteMessage" role="status" aria-live="polite"></p>
+        <div id="registrationInviteResult" hidden>
+          <label>Link de cadastro
+            <input id="registrationInviteUrl" type="url" readonly>
+          </label>
+          <div class="actions">
+            <button type="button" class="secondary" id="copyRegistrationInviteButton" hidden>Copiar link</button>
+            <button type="button" class="secondary" id="replaceRegistrationInviteButton" hidden>Gerar outro link e invalidar o anterior</button>
+          </div>
+        </div>
+      </section>
+      </div>
+
+      <div id="audienceAdminTab" class="admin-tab-content" role="tabpanel">
       <section class="panel admin-only">
         <div class="section-title"><div><h2>Audiências</h2><p>Cadastre e disponibilize audiências para inscrição pública.</p></div></div>
         <form id="audienceForm" class="inline-form">
           <label>Assunto<input name="name" maxlength="160" required></label>
           <label>Data<input name="date" type="date" required></label>
           <label>Horário<input name="time" type="time" required></label>
+          <label>Vagas (opcional)<input name="capacity" type="number" min="1" step="1" placeholder="Sem limite"></label>
+          <label>Situação<select name="status"><option value="open">Inscrições abertas</option><option value="preparing">Em preparação</option><option value="closed">Inscrições encerradas</option></select></label>
           <button class="primary" type="submit">Criar audiência</button>
         </form>
         <p class="message" id="audienceMessage" role="status"></p>
@@ -55,6 +115,8 @@
           <article><span>Entradas validadas</span><strong id="metricEntries">0</strong></article>
           <article><span>Tentativas inválidas</span><strong id="metricInvalid">0</strong></article>
           <article><span>Comparecimento</span><strong id="metricPercent">0%</strong></article>
+          <article><span>Lista de espera</span><strong id="metricWaitlisted">0</strong></article>
+          <article><span>Cancelados</span><strong id="metricCancelled">0</strong></article>
         </div>
         <div class="split">
           <div><h3>Por categoria</h3><div id="categoryStats"></div></div>
@@ -63,39 +125,25 @@
         <h3>Últimas entradas</h3><div id="recentEntries" class="recent"></div>
       </section>
 
-      <section class="panel">
-        <div class="section-title"><div><h2>Recepção e validação</h2><p>Leia o QR Code, use leitor USB/Bluetooth ou digite o código.</p></div></div>
-        <div class="scanner-layout">
-          <div>
-            <video id="scannerVideo" playsinline muted></video>
-            <div class="actions">
-              <button id="cameraButton" class="secondary" type="button">Ativar câmera</button>
-              <button id="stopCameraButton" class="secondary" type="button" hidden>Parar câmera</button>
-            </div>
-          </div>
-          <form id="scanForm">
-            <label>Código da credencial<input id="scanCode" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" aria-label="Código da credencial"></label>
-            <button class="primary" type="submit">Validar entrada</button>
-            <div id="scanMessage" role="status" aria-live="assertive" aria-atomic="true" class="scan-message"></div>
-          </form>
-        </div>
-      </section>
-
-      <section class="panel admin-only">
+      <section class="panel admin-only" id="participantsPanel">
         <div class="section-title"><div><h2>Participantes</h2><p>CPF e contatos aparecem apenas para usuários autenticados.</p></div>
           <div class="export-actions">
             <button data-export="csv" class="secondary">CSV</button>
             <button data-export="xlsx" class="secondary">Excel</button>
             <button data-export="pdf" class="secondary">PDF</button>
+            <button id="printAudienceList" class="secondary" type="button">Imprimir lista</button>
           </div>
         </div>
         <div class="filters">
           <input id="searchPeople" type="search" placeholder="Nome, CPF, município ou categoria" aria-label="Pesquisar participantes por nome, CPF, município ou categoria">
           <select id="filterAudience"><option value="">Todas as audiências</option></select>
           <input id="filterDate" type="date" aria-label="Filtrar por data">
-          <select id="filterStatus"><option value="">Todas as situações</option><option value="present">Presente</option><option value="absent">Ausente</option><option value="cancelled">Credencial cancelada</option></select>
+          <select id="filterStatus"><option value="">Todas as situações</option><option value="present">Presente</option><option value="absent">Ausente</option><option value="waitlisted">Lista de espera</option><option value="cancelled">Credencial cancelada</option></select>
+          <button id="clearPeopleFilters" class="secondary" type="button">Limpar filtros</button>
           <button id="refreshPeople" class="secondary">Atualizar</button>
         </div>
+        <p id="peopleResultCount" class="result-count" aria-live="polite"></p>
+        <p class="offline-guidance">Contingência: imprima a lista para marcar presenças sem conexão. Ao restabelecer o acesso, localize cada pessoa e use “Liberar” com a justificativa “Contingência offline”.</p>
         <div class="table-wrap">
           <table><thead><tr><th>Nome / CPF</th><th>Categoria</th><th>Município</th><th>Cargo</th><th>Audiência</th><th>Entrada</th><th>Situação</th><th>Ações</th></tr></thead>
             <tbody id="peopleRows"><tr><td colspan="8">Carregando…</td></tr></tbody></table>
@@ -107,6 +155,58 @@
         <div class="section-title"><div><h2>Histórico administrativo e de acessos</h2><p>Registro das validações e operações administrativas.</p></div></div>
         <div id="historyRows" class="history-list"></div>
       </section>
+      </div>
+
+      <div id="eventAdminTab" class="admin-tab-content" role="tabpanel" hidden>
+        <section class="panel">
+          <div class="section-title"><div><h2>Eventos</h2><p>Cadastre eventos independentes das audiências, com inscrições e lista de presença próprias.</p></div></div>
+          <form id="eventForm" class="inline-form event-form">
+            <label>Nome do evento<input name="name" maxlength="160" required></label>
+            <label>Data<input name="date" type="date" required></label>
+            <label>Início<input name="time" type="time" required></label>
+            <label>Término<input name="end_time" type="time"></label>
+            <label>Local<input name="location" maxlength="200" required></label>
+            <label>Vagas (opcional)<input name="capacity" type="number" min="1" step="1" placeholder="Sem limite"></label>
+            <label>Situação<select name="status"><option value="open">Inscrições abertas</option><option value="preparing">Em preparação</option><option value="closed">Inscrições encerradas</option></select></label>
+            <button class="primary" type="submit">Criar evento</button>
+          </form>
+          <p class="message" id="eventMessage" role="status"></p>
+          <div id="eventsList" class="audiences-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-title">
+            <div><h2>Inscritos e presença</h2><p>Os participantes e credenciais desta lista não se misturam com os das audiências.</p></div>
+            <div class="export-actions">
+              <button id="exportEventCsv" class="secondary" type="button">Exportar CSV</button>
+              <button id="printEventList" class="secondary" type="button">Imprimir</button>
+            </div>
+          </div>
+          <p class="offline-guidance">Contingência: imprima a lista para marcar presenças sem conexão. Ao restabelecer o acesso, localize cada pessoa e use “Liberar” com a justificativa “Contingência offline”.</p>
+          <div class="event-roster-filters">
+            <label>Evento<select id="eventRosterSelect"><option value="">Selecione um evento</option></select></label>
+            <input id="searchEventPeople" type="search" placeholder="Nome, CPF, município ou categoria" aria-label="Pesquisar participantes do evento">
+            <select id="filterEventStatus" aria-label="Filtrar presença do evento">
+              <option value="">Todas as situações</option><option value="present">Presente</option><option value="absent">Ausente</option><option value="waitlisted">Lista de espera</option><option value="cancelled">Credencial cancelada</option>
+            </select>
+            <button id="clearEventFilters" class="secondary" type="button">Limpar filtros</button>
+            <button id="refreshEventPeople" class="secondary" type="button">Atualizar</button>
+          </div>
+          <p id="eventResultCount" class="result-count" aria-live="polite"></p>
+          <div class="metrics event-metrics">
+            <article><span>Inscritos</span><strong id="eventRegistered">0</strong></article>
+            <article><span>Presentes</span><strong id="eventPresent">0</strong></article>
+            <article><span>Ausentes</span><strong id="eventAbsent">0</strong></article>
+            <article><span>Cancelados</span><strong id="eventCancelled">0</strong></article>
+            <article><span>Lista de espera</span><strong id="eventWaitlisted">0</strong></article>
+          </div>
+          <div class="table-wrap">
+            <table><thead><tr><th>Nome / CPF</th><th>Categoria</th><th>Município</th><th>Cargo</th><th>Entrada</th><th>Situação</th><th>Ações</th></tr></thead>
+              <tbody id="eventPeopleRows"><tr class="empty-row"><td colspan="7">Selecione um evento para consultar os inscritos.</td></tr></tbody></table>
+          </div>
+          <p class="message" id="eventPeopleMessage" role="status"></p>
+        </section>
+      </div>
     </div>
   </main>
 
@@ -134,11 +234,31 @@
       <label>Assunto<input name="name" maxlength="160" required></label>
       <label>Data<input name="date" type="date" required></label>
       <label>Horário<input name="time" type="time" required></label>
+      <label>Vagas (opcional)<input name="capacity" type="number" min="1" step="1" placeholder="Sem limite"></label>
+      <label>Situação<select name="status"><option value="open">Inscrições abertas</option><option value="preparing">Em preparação</option><option value="closed">Inscrições encerradas</option><option value="cancelled">Cancelada</option><option value="archived">Arquivada</option></select></label>
       <div class="actions">
         <button type="button" class="secondary" id="cancelAudienceEdit">Cancelar</button>
         <button type="submit" class="primary">Salvar alterações</button>
       </div>
       <p class="message" id="audienceEditMessage" role="status"></p>
+    </form>
+  </dialog>
+  <dialog id="eventEditDialog">
+    <form id="eventEditForm">
+      <h2>Editar evento</h2>
+      <input type="hidden" name="id">
+      <label>Nome<input name="name" maxlength="160" required></label>
+      <label>Data<input name="date" type="date" required></label>
+      <label>Horário de início<input name="time" type="time" required></label>
+      <label>Horário de término<input name="end_time" type="time"></label>
+      <label>Local<input name="location" maxlength="200" required></label>
+      <label>Vagas (opcional)<input name="capacity" type="number" min="1" step="1" placeholder="Sem limite"></label>
+      <label>Situação<select name="status"><option value="open">Inscrições abertas</option><option value="preparing">Em preparação</option><option value="closed">Inscrições encerradas</option><option value="cancelled">Cancelado</option><option value="archived">Arquivado</option></select></label>
+      <div class="actions">
+        <button type="button" class="secondary" id="cancelEventEdit">Cancelar</button>
+        <button type="submit" class="primary">Salvar alterações</button>
+      </div>
+      <p class="message" id="eventEditMessage" role="status"></p>
     </form>
   </dialog>
   <dialog id="credentialDialog">

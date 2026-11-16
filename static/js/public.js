@@ -73,7 +73,9 @@
     select.add(placeholder);
     audiences.forEach((audience) => {
       const option = new Option(
-        `${audience.name} · ${new Date(`${audience.date}T12:00:00`).toLocaleDateString("pt-BR")} · ${audience.time}`,
+        `${audience.name} · ${new Date(`${audience.date}T12:00:00`).toLocaleDateString("pt-BR")} · ${audience.time}${
+          audience.available_spots === 0 ? " · Lista de espera" : audience.available_spots === null ? "" : ` · ${audience.available_spots} vaga(s)`
+        }`,
         audience.id,
       );
       select.add(option);
@@ -108,7 +110,14 @@
     $("#audienceDate").value = selectedAudience?.date || "";
     $("#audienceTime").value = selectedAudience?.time || "";
     $("#registerForm button[type=submit]").disabled = !selectedAudience;
-    if (selectedAudience) showAudienceMessage("");
+    $("#registerForm button[type=submit]").textContent = selectedAudience?.available_spots === 0
+      ? "Entrar na lista de espera"
+      : "Finalizar e gerar QR Code";
+    if (selectedAudience?.available_spots === 0) {
+      showAudienceMessage("As vagas foram preenchidas. Você poderá se inscrever na lista de espera.");
+    } else if (selectedAudience?.available_spots !== null && selectedAudience) {
+      showAudienceMessage(`${selectedAudience.available_spots} vaga(s) disponível(is).`);
+    } else if (selectedAudience) showAudienceMessage("");
   }
 
   function showAudienceMessage(text, includeAdminLink = false) {
@@ -280,8 +289,10 @@
     try {
       const result = await request("/api/participants", { method: "POST", body: payload });
       const phone = $("#personPhone").value.trim();
-      lastCredential = { ...result, phone };
-      renderCredential(result.credential, result.participant);
+      if (result.registration_status === "confirmed") {
+        lastCredential = { ...result, phone };
+        renderCredential(result.credential, result.participant);
+      }
       form.reset();
       $("#personDocument").value = "";
       $("#personPhone").value = "";
@@ -296,12 +307,19 @@
         $("#audienceSelect").value = selectedAudience.id;
         selectAudience(selectedAudience.id);
       }
-      setStatus("Cadastro concluído. A credencial digital foi criada.");
+      if (result.registration_status === "waitlisted") {
+        showAudienceMessage("Inscrição registrada na lista de espera. Avisaremos por e-mail se uma vaga for liberada.");
+      } else {
+        setStatus("Cadastro concluído. A credencial digital foi criada.");
+      }
+      if (result.notification_warning) setStatus(result.notification_warning, true);
     } catch (error) {
       alert(error.message);
     } finally {
       button.disabled = !selectedAudience;
-      button.textContent = "Finalizar e gerar QR Code";
+      button.textContent = selectedAudience?.available_spots === 0
+        ? "Entrar na lista de espera"
+        : "Finalizar e gerar QR Code";
     }
   };
 
