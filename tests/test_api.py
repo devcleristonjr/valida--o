@@ -416,6 +416,9 @@ class PleitosApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'id="inviteFormPanel" hidden', response.data)
         self.assertIn(b'data-invite-token="example-token"', response.data)
+        self.assertIn(b'id="inviteStartPhotoCamera"', response.data)
+        self.assertIn(b'id="inviteCapturePhoto"', response.data)
+        self.assertIn(b'id="invitePhotoFile"', response.data)
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
 

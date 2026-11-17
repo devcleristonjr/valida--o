@@ -72,9 +72,19 @@
           <label>Instagram
             <input name="instagram" maxlength="60" placeholder="@seuusuario">
           </label>
-          <label class="full">Fotografia para a credencial *
-            <input name="photo" type="file" accept="image/jpeg,image/png,image/webp" required>
-          </label>
+          <div class="full photo-control">
+            <strong>Fotografia para a credencial *</strong>
+            <p class="muted">Tire uma foto com a câmera ou selecione uma imagem JPEG, PNG ou WebP de até 5 MB.</p>
+            <div class="photo-actions">
+              <button type="button" class="secondary" id="inviteStartPhotoCamera">Ativar câmera</button>
+              <button type="button" class="secondary" id="inviteCapturePhoto" hidden>Tirar foto</button>
+              <button type="button" class="secondary" id="inviteRetakePhoto" hidden>Tirar novamente</button>
+              <label class="file-button">Selecionar foto<input id="invitePhotoFile" name="photo" type="file" accept="image/jpeg,image/png,image/webp" capture="user"></label>
+            </div>
+            <video id="invitePhotoVideo" playsinline muted hidden></video>
+            <img id="invitePhotoPreview" alt="Prévia da fotografia selecionada" hidden>
+            <p id="invitePhotoStatus" class="field-message" role="status"></p>
+          </div>
           <p class="full privacy-notice">Os dados de identificação, contato e fotografia serão usados pela equipe autorizada para organizar a atividade, emitir a credencial e registrar a presença. A fotografia não é submetida a reconhecimento biométrico automatizado. O prazo de retenção e o canal para exercício dos direitos do titular devem seguir a política institucional vigente.</p>
           <label class="privacy-check full">
             <input type="checkbox" name="consent" value="true" required>
