@@ -9,6 +9,8 @@
   let refreshTimer;
   let isAdmin = false;
   let isInviteManager = false;
+  let workflowData = null;
+  let workflowView = 0;
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -274,6 +276,7 @@
     });
     if (tabId !== "receptionAdminTab") stopScanner();
     if (tabId === "eventAdminTab") loadEventPeople().catch(showError);
+    if (tabId === "workflowAdminTab") loadWorkflowForSelectedEvent().catch(showError);
     if (tabId === "receptionAdminTab") $("#scanCode").focus({ preventScroll: true });
   }
 
@@ -440,6 +443,9 @@
       `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)} · ${escapeHtml(item.date)}</option>`) ];
     $("#eventRosterSelect").innerHTML = options.join("");
     $("#eventRosterSelect").value = events.some((item) => item.id === selectedId) ? selectedId : "";
+    const workflowSelectedId = $("#workflowEventSelect").value;
+    $("#workflowEventSelect").innerHTML = options.join("");
+    $("#workflowEventSelect").value = events.some((item) => item.id === workflowSelectedId) ? workflowSelectedId : "";
     if (!events.length) {
       const empty = document.createElement("p");
       empty.className = "audiences-empty";
@@ -980,6 +986,236 @@
     $("#cameraButton").hidden = false;
     $("#stopCameraButton").hidden = true;
   }
+
+  const workflowStages = [
+    ["demand", "Demanda"],
+    ["analysis", "Análise"],
+    ["agenda", "Agenda"],
+    ["technical_note", "Nota Técnica"],
+    ["ceremonial", "Cerimonial"],
+    ["secom", "SECOM"],
+    ["report", "Relatórios"],
+  ];
+
+  function workflowTextField(key, label, value, type = "text") {
+    const safeValue = escapeHtml(value || "");
+    if (type === "textarea") {
+      return `<label>${escapeHtml(label)}<textarea data-workflow-field="${escapeHtml(key)}" rows="4">${safeValue}</textarea></label>`;
+    }
+    if (type === "json") {
+      return `<label>${escapeHtml(label)}<textarea data-workflow-field="${escapeHtml(key)}" data-workflow-json="true" rows="5">${escapeHtml(JSON.stringify(value || [], null, 2))}</textarea></label>`;
+    }
+    if (type === "select") {
+      return "";
+    }
+    return `<label>${escapeHtml(label)}<input data-workflow-field="${escapeHtml(key)}" type="${type}" value="${safeValue}"></label>`;
+  }
+
+  function workflowSelectField(key, label, value, options) {
+    return `<label>${escapeHtml(label)}<select data-workflow-field="${escapeHtml(key)}">${options.map((option) =>
+      `<option value="${escapeHtml(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`
+    ).join("")}</select></label>`;
+  }
+
+  function renderWorkflowStepper() {
+    $("#workflowStepper").innerHTML = workflowStages.map(([key, label], index) => {
+      const status = workflowData?.stage_status?.[key]?.status || "pending";
+      const state = status === "completed" || index < workflowData.current_stage
+        ? "done" : index === workflowData.current_stage ? "current" : "";
+      return `<button type="button" class="workflow-step ${state} ${index === workflowView ? "view" : ""}" data-workflow-view="${index}">
+        <span>${index + 1}</span><strong>${escapeHtml(label)}</strong>
+      </button>`;
+    }).join("");
+  }
+
+  function renderWorkflowStage() {
+    if (!workflowData) return;
+    const [key] = workflowStages[workflowView];
+    const stage = workflowData[key] || {};
+    let fields = "";
+    if (key === "demand") {
+      fields = [
+        workflowTextField("requester", "Solicitante", stage.requester),
+        workflowTextField("origin", "Origem / documento", stage.origin),
+        workflowTextField("received_at", "Recebido em", stage.received_at, "date"),
+        workflowTextField("description", "Descrição da demanda", stage.description, "textarea"),
+      ].join("");
+    } else if (key === "analysis") {
+      fields = [
+        workflowSelectField("relevance", "Pertinência institucional", stage.relevance, ["", "Alta", "Média", "Baixa"]),
+        workflowSelectField("decision", "Decisão", stage.decision, ["Em análise", "Aprovado", "Aprovado com ajustes", "Recusado"]),
+        workflowTextField("opinion", "Parecer técnico e institucional", stage.opinion, "textarea"),
+        workflowTextField("adjustments", "Motivo ou ajustes exigidos", stage.adjustments, "textarea"),
+      ].join("");
+    } else if (key === "agenda") {
+      fields = [
+        workflowTextField("team", "Equipe responsável", stage.team),
+        workflowTextField("transport", "Transporte / deslocamento", stage.transport),
+        workflowTextField("security", "Segurança e saúde", stage.security),
+        workflowTextField("lodging", "Hospedagem", stage.lodging),
+        workflowTextField("political", "Organização política", stage.political, "textarea"),
+        workflowTextField("logistics", "Logística do local", stage.logistics, "textarea"),
+        workflowTextField("checklist", "Checklist operacional", stage.checklist, "json"),
+      ].join("");
+    } else if (key === "technical_note") {
+      fields = [
+        workflowTextField("population", "População", stage.population),
+        workflowTextField("idh", "IDH", stage.idh),
+        workflowTextField("gdp", "PIB", stage.gdp),
+        workflowTextField("economy", "Principais atividades econômicas", stage.economy),
+        workflowTextField("investments", "Investimentos do Estado", stage.investments, "textarea"),
+        workflowTextField("local_demands", "Demandas locais", stage.local_demands, "textarea"),
+        workflowTextField("trip_report", "Relatório de viagem", stage.trip_report, "textarea"),
+      ].join("");
+    } else if (key === "ceremonial") {
+      fields = [
+        workflowTextField("route", "Roteiro", stage.route, "json"),
+        workflowTextField("plaques", "Placas", stage.plaques, "json"),
+        workflowTextField("acts", "Atos", stage.acts, "json"),
+        workflowTextField("visits", "Visitas realizadas", stage.visits, "textarea"),
+        workflowTextField("return_note", "Retorno da realização", stage.return_note, "textarea"),
+      ].join("");
+    } else if (key === "secom") {
+      fields = [
+        workflowTextField("brief", "Pauta / orientação de cobertura", stage.brief, "textarea"),
+        workflowTextField("deliverables", "Entregáveis", stage.deliverables, "json"),
+        workflowTextField("release", "Texto / release publicado", stage.release, "textarea"),
+      ].join("");
+    } else {
+      fields = [
+        workflowTextField("authorities", "Autoridades presentes", stage.authorities, "json"),
+        workflowTextField("geography", "Geografia política", stage.geography, "textarea"),
+        workflowTextField("assessment", "Avaliação geral", stage.assessment, "textarea"),
+      ].join("");
+    }
+    const status = workflowData.stage_status?.[key] || { status: "pending", owner: "", due_at: "" };
+    const statusOptions = ["pending", "in_progress", "completed", "blocked"];
+    $("#workflowStageContent").innerHTML = `
+      <div class="workflow-fields">${fields}</div>
+      <div class="workflow-stage-control">
+        ${workflowSelectField("workflow_status", "Situação da etapa", status.status, statusOptions)}
+        <label>Responsável<input data-workflow-status="owner" value="${escapeHtml(status.owner)}"></label>
+        <label>Prazo<input data-workflow-status="due_at" type="date" value="${escapeHtml(status.due_at)}"></label>
+      </div>`;
+  }
+
+  function workflowSectionPayload() {
+    const [key] = workflowStages[workflowView];
+    const payload = {};
+    $("#workflowStageContent").querySelectorAll("[data-workflow-field]").forEach((field) => {
+      let value = field.value;
+      if (field.dataset.workflowJson === "true") {
+        try {
+          value = value.trim() ? JSON.parse(value) : [];
+        } catch (error) {
+          throw new Error("Informe uma lista válida em JSON. Use colchetes e aspas duplas.");
+        }
+      }
+      payload[field.dataset.workflowField] = value;
+    });
+    const statusNode = $("#workflowStageContent").querySelector('[data-workflow-field="workflow_status"]');
+    const status = {
+      [key]: {
+        status: statusNode?.value || "pending",
+        owner: $("#workflowStageContent").querySelector('[data-workflow-status="owner"]')?.value || "",
+        due_at: $("#workflowStageContent").querySelector('[data-workflow-status="due_at"]')?.value || "",
+      },
+    };
+    return { key, payload, status };
+  }
+
+  async function saveWorkflow({ advance = false, close = false } = {}) {
+    if (!workflowData) return;
+    const eventId = $("#workflowEventSelect").value;
+    const section = workflowSectionPayload();
+    const allStatus = {};
+    workflowStages.forEach(([stageKey]) => {
+      allStatus[stageKey] = workflowData.stage_status?.[stageKey] || { status: "pending", owner: "", due_at: "" };
+    });
+    allStatus[section.key] = section.status[section.key];
+    const updated = await api(`/api/admin/events/${encodeURIComponent(eventId)}/workflow`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        [section.key]: section.payload,
+        stage_status: allStatus,
+        advance,
+        close,
+      }),
+    });
+    workflowData = updated;
+    renderWorkflowStepper();
+    renderWorkflowStage();
+    $("#workflowReport").textContent = updated.consolidated_report || "";
+    setNotice($("#workflowMessage"), close ? "Fluxo aprovado e encerrado." : advance ? "Etapa concluída e fluxo avançado." : "Etapa salva.", true);
+  }
+
+  async function loadWorkflowForSelectedEvent() {
+    const eventId = $("#workflowEventSelect").value;
+    if (!eventId) {
+      $("#workflowEmpty").hidden = false;
+      $("#workflowApp").hidden = true;
+      return;
+    }
+    workflowData = await api(`/api/admin/events/${encodeURIComponent(eventId)}/workflow`);
+    workflowView = workflowData.current_stage;
+    $("#workflowEmpty").hidden = true;
+    $("#workflowApp").hidden = false;
+    renderWorkflowStepper();
+    renderWorkflowStage();
+    $("#workflowReport").textContent = workflowData.consolidated_report || "";
+    $("#workflowClose").disabled = workflowData.closed;
+    $("#workflowAdvance").disabled = workflowData.closed || workflowData.current_stage >= workflowStages.length - 1;
+  }
+
+  $("#workflowEventSelect").addEventListener("change", () => loadWorkflowForSelectedEvent().catch(showError));
+  $("#workflowStepper").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-workflow-view]");
+    if (!button) return;
+    workflowView = Number(button.dataset.workflowView);
+    renderWorkflowStepper();
+    renderWorkflowStage();
+  });
+  $("#workflowForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await saveWorkflow();
+    } catch (error) {
+      setNotice($("#workflowMessage"), error.message);
+    }
+  });
+  $("#workflowPrevious").addEventListener("click", () => {
+    if (workflowView > 0) {
+      workflowView -= 1;
+      renderWorkflowStepper();
+      renderWorkflowStage();
+    }
+  });
+  $("#workflowAdvance").addEventListener("click", async () => {
+    try {
+      await saveWorkflow({ advance: true });
+      if (workflowView < workflowStages.length - 1) workflowView += 1;
+      renderWorkflowStepper();
+      renderWorkflowStage();
+    } catch (error) {
+      setNotice($("#workflowMessage"), error.message);
+    }
+  });
+  $("#workflowClose").addEventListener("click", async () => {
+    if (!confirm("Aprovar e encerrar o fluxo institucional deste evento?")) return;
+    try {
+      await saveWorkflow({ close: true });
+    } catch (error) {
+      setNotice($("#workflowMessage"), error.message);
+    }
+  });
+  $("#copyWorkflowReport").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("#workflowReport").textContent);
+      setNotice($("#workflowMessage"), "Relatório copiado.", true);
+    } catch (error) {
+      setNotice($("#workflowMessage"), "Não foi possível copiar automaticamente.");
+    }
+  });
 
   window.addEventListener("pagehide", stopScanner);
 

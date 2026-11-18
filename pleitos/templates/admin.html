@@ -4,14 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PLEITOS • Administração SERIN</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="/static/css/institutional.css">
   <link rel="stylesheet" href="/static/css/admin.css">
   <script src="/static/js/qr-reader.bundle.js" defer></script>
   <script src="/static/js/admin.js" defer></script>
 </head>
 <body>
   <header class="masthead">
-    <div class="brand-mark" aria-hidden="true">S</div>
-    <div><p class="eyebrow">SERIN • PLEITOS</p><h1>Gestão de audiências e eventos</h1></div>
+    <div class="system-brand">
+      <div class="brand-mark" aria-hidden="true">P</div>
+      <div><p class="eyebrow">PLEITOS • SERIN</p><h1>Gestão Institucional</h1></div>
+    </div>
+    <nav class="system-nav" aria-label="Módulos do sistema">
+      <a href="/"><i class="nav-dot"></i>Home</a>
+      <a href="/admin" class="active"><i class="nav-dot"></i>Audiências e Eventos</a>
+      <a href="/"><i class="nav-dot"></i>Gestão</a>
+    </nav>
     <a class="home-link" href="/">Início</a>
   </header>
   <main class="wrap">
@@ -27,6 +39,38 @@
     </section>
 
     <div id="adminApp" hidden>
+      <aside class="prototype-sidebar" aria-label="Navegação administrativa">
+        <div class="prototype-sidebar-heading">
+          <span>Fluxo do Evento</span>
+          <small>Gestão institucional</small>
+        </div>
+        <nav class="prototype-flow" aria-label="Áreas de gestão">
+          <div class="prototype-flow-group">
+            <span class="prototype-group-title">Planejamento</span>
+            <button type="button" class="prototype-flow-step active" data-admin-tab="audienceAdminTab">
+              <span class="prototype-step-number">1</span><span>Dados e Audiências</span>
+            </button>
+            <button type="button" class="prototype-flow-step invite-manager-only" data-admin-tab="invitesAdminTab" hidden>
+              <span class="prototype-step-number">2</span><span>Convites</span>
+            </button>
+          </div>
+          <div class="prototype-flow-group">
+            <span class="prototype-group-title">Organização e Execução</span>
+            <button type="button" class="prototype-flow-step admin-only" data-admin-tab="eventAdminTab" hidden>
+              <span class="prototype-step-number">3</span><span>Eventos</span>
+            </button>
+            <button type="button" class="prototype-flow-step admin-only" data-admin-tab="workflowAdminTab" hidden>
+              <span class="prototype-step-number">4</span><span>Planejamento</span>
+            </button>
+            <button type="button" class="prototype-flow-step" data-admin-tab="receptionAdminTab">
+              <span class="prototype-step-number">5</span><span>Recepção</span>
+            </button>
+          </div>
+        </nav>
+        <div class="prototype-status-legend">
+          <span>Pendente</span><span>Análise necessária</span><span>Concluído</span>
+        </div>
+      </aside>
       <div class="toolbar">
         <p>Usuário: <strong id="adminName"></strong></p>
         <div class="toolbar-actions">
@@ -42,6 +86,7 @@
       <nav class="admin-tabs" role="tablist" aria-label="Áreas de gestão">
         <button type="button" class="active" role="tab" data-admin-tab="audienceAdminTab" aria-controls="audienceAdminTab" aria-selected="true">Audiências</button>
         <button type="button" class="admin-only" role="tab" data-admin-tab="eventAdminTab" aria-controls="eventAdminTab" aria-selected="false">Eventos</button>
+        <button type="button" class="admin-only" role="tab" data-admin-tab="workflowAdminTab" aria-controls="workflowAdminTab" aria-selected="false">Planejamento</button>
         <button type="button" class="invite-manager-only" role="tab" data-admin-tab="invitesAdminTab" aria-controls="invitesAdminTab" aria-selected="false" hidden>Convites</button>
         <button type="button" role="tab" data-admin-tab="receptionAdminTab" aria-controls="receptionAdminTab" aria-selected="false">Recepção</button>
       </nav>
@@ -205,6 +250,36 @@
               <tbody id="eventPeopleRows"><tr class="empty-row"><td colspan="7">Selecione um evento para consultar os inscritos.</td></tr></tbody></table>
           </div>
           <p class="message" id="eventPeopleMessage" role="status"></p>
+        </section>
+      </div>
+
+      <div id="workflowAdminTab" class="admin-tab-content" role="tabpanel" hidden>
+        <section class="panel">
+          <div class="section-title">
+            <div><h2>Planejamento institucional</h2><p>Acompanhe cada evento da demanda ao relatório final.</p></div>
+            <label class="filter-label">Evento
+              <select id="workflowEventSelect"><option value="">Selecione um evento</option></select>
+            </label>
+          </div>
+          <div id="workflowEmpty" class="audiences-empty">Selecione um evento para abrir o fluxo institucional.</div>
+          <div id="workflowApp" hidden>
+            <nav id="workflowStepper" class="workflow-stepper" aria-label="Etapas do evento"></nav>
+            <form id="workflowForm">
+              <div id="workflowStageContent"></div>
+              <div class="workflow-actions">
+                <button type="button" class="secondary" id="workflowPrevious">Etapa anterior</button>
+                <button type="submit" class="secondary" id="workflowSave">Salvar etapa</button>
+                <button type="button" class="primary" id="workflowAdvance">Concluir etapa e avançar</button>
+                <button type="button" class="primary" id="workflowClose">Aprovar e encerrar</button>
+              </div>
+              <p class="message" id="workflowMessage" role="status"></p>
+            </form>
+            <section class="workflow-report">
+              <h3>Relatório consolidado</h3>
+              <pre id="workflowReport"></pre>
+              <button type="button" class="secondary" id="copyWorkflowReport">Copiar relatório</button>
+            </section>
+          </div>
         </section>
       </div>
     </div>

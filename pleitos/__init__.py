@@ -113,7 +113,8 @@ def create_app(test_config=None):
             "Content-Security-Policy",
             "default-src 'self'; base-uri 'self'; object-src 'none'; "
             "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
-            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+            "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; "
             "connect-src 'self' https://servicodados.ibge.gov.br; "
             "media-src 'self' blob:; frame-ancestors 'none'; form-action 'self'",
         )
@@ -138,6 +139,7 @@ def create_app(test_config=None):
         html = html.replace("Validação facial", "Fotografia para credencial")
         html = html.replace(
             "</head>",
+            '<link rel="stylesheet" href="/static/css/institutional.css">'
             '<link rel="stylesheet" href="/static/css/public-layout.css"></head>',
         )
         html = html.replace(

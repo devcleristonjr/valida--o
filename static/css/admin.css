@@ -52,6 +52,7 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 .event-roster-filters input,.event-roster-filters select{min-width:0}
 .event-metrics{grid-template-columns:repeat(4,minmax(0,1fr));margin:12px 0}
 .event-metrics article{padding:10px 12px}
+.workflow-stepper{display:flex;gap:6px;overflow-x:auto;margin:14px 0}.workflow-step{min-width:112px;display:grid;gap:2px;text-align:left;border:1px solid var(--line);border-radius:10px;background:#fff}.workflow-step span{color:var(--muted);font-size:11px}.workflow-step.done{border-color:#b9e5d1;background:#eaf8f1;color:#0e7950}.workflow-step.current{border-color:var(--wine);background:#fff7f8}.workflow-step.view{box-shadow:0 0 0 2px #801c2c25}.workflow-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.workflow-fields label:last-child:nth-child(odd){grid-column:1/-1}.workflow-fields textarea{width:100%;min-height:92px;resize:vertical;border:1px solid #dfe1e8;border-radius:9px;padding:10px 11px;font:inherit}.workflow-fields input,.workflow-fields select{margin-top:6px}.workflow-stage-control{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:14px;padding:12px;background:#f8f8fa;border-radius:12px}.workflow-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:14px}.workflow-report{margin-top:18px}.workflow-report pre{white-space:pre-wrap;max-height:360px;overflow:auto;padding:14px;border:1px solid var(--line);border-radius:10px;background:#f8f8fa;font:12px/1.55 ui-monospace,Consolas,monospace}
 @media(max-width:850px){
   .event-form{grid-template-columns:repeat(2,minmax(0,1fr))}
   .event-roster-filters{grid-template-columns:1fr 1fr}
@@ -60,6 +61,9 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
 }
 @media(max-width:600px){
   .event-form,.event-roster-filters{grid-template-columns:1fr}
+  .workflow-fields,.workflow-stage-control{grid-template-columns:1fr}
+  .workflow-fields label:last-child:nth-child(odd){grid-column:auto}
+  .workflow-actions>*{width:100%}
   .filters{grid-template-columns:1fr}
   .filters input:first-child{grid-column:auto}
   .toolbar-actions{justify-content:stretch}
@@ -67,6 +71,96 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{ou
   .last-updated{flex-basis:100%}
   .admin-tabs{overflow-x:auto}
   .admin-tabs button{flex:1 0 auto}
+}
+ 
+/* Interface institucional inspirada no novo protótipo PLEITOS */
+body{
+  font-family:Inter,"Segoe UI",Arial,sans-serif;
+  background:#eef1f5;
+  min-height:100vh;
+}
+.masthead{
+  width:100%;
+  min-height:56px;
+  margin:0;
+  padding:7px 14px;
+  border-radius:0;
+  background:linear-gradient(90deg,#9b0102,#450f0f);
+  box-shadow:0 4px 14px #450f0f18;
+}
+.system-brand{display:flex;align-items:center;gap:10px}
+.system-brand .brand-mark{width:40px;height:40px;border:0;border-radius:8px;background:#fff;color:#970808;font-size:22px}
+.system-brand h1{font-size:14px}.system-brand .eyebrow{font-size:9px}
+.system-nav{display:flex;align-items:center;gap:3px;margin-left:20px}
+.system-nav a{display:flex;align-items:center;gap:6px;padding:8px 9px;border-radius:6px;color:#fff;text-decoration:none;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.system-nav a.active,.system-nav a:hover{background:#ffffff20}.nav-dot{width:6px;height:6px;border-radius:50%;background:#ffffff55}
+.masthead .home-link{background:#ffffff12;color:#fff;border-color:#ffffff35}
+.wrap{width:100%;height:calc(100vh - 56px);max-width:none;padding:10px;margin:0;border-radius:0;background:#eef1f5;box-shadow:none}
+.login-panel{margin:15vh auto}
+#adminApp{position:relative;min-height:100%;padding:0 0 0 218px}
+.prototype-sidebar{position:absolute;inset:0 auto 0 0;width:208px;padding:12px 8px 8px;border:1px solid #dde3ea;border-radius:9px;background:#fff;display:flex;flex-direction:column;overflow-y:auto}
+.prototype-sidebar-heading{display:grid;gap:3px;margin:0 4px 12px;padding-bottom:9px;border-bottom:1px solid #edf0f4}
+.prototype-sidebar-heading span{color:#970808;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.prototype-sidebar-heading small{color:#64748b;font-size:9px;font-weight:700}
+.prototype-flow{display:grid;gap:10px}
+.prototype-flow-group{position:relative;display:grid;gap:4px}
+.prototype-flow-group:not(:last-child)::after{content:"";position:absolute;left:20px;bottom:-8px;width:2px;height:8px;background:#dce5ee}
+.prototype-group-title{margin:0 2px 3px;color:#64748b;font-size:8px;font-weight:800;letter-spacing:.07em;text-transform:uppercase}
+.prototype-flow-step{position:relative;z-index:1;display:flex;align-items:center;gap:8px;width:100%;min-height:42px;padding:5px 6px;border:1px solid transparent;border-radius:7px;background:transparent;color:#19334f;font-size:10px;font-weight:700;text-align:left}
+.prototype-flow-step:hover{background:#f6f8fa}
+.prototype-flow-step.active{border-color:#9b0102;background:#fff8f9;box-shadow:0 0 0 1px #9b010212}
+.prototype-step-number{width:25px;height:25px;flex:0 0 25px;display:grid;place-items:center;border-radius:50%;background:#e5e7eb;color:#64748b;font-size:10px;font-weight:800}
+.prototype-flow-step.active .prototype-step-number{background:#970808;color:#fff}
+.prototype-status-legend{display:grid;gap:5px;margin-top:auto;padding:9px 5px 2px;border-top:1px solid #e5e9ef}
+.prototype-status-legend span{display:flex;align-items:center;gap:7px;color:#64748b;font-size:9px;font-weight:700}
+.prototype-status-legend span::before{content:"";width:10px;height:10px;border-radius:50%;background:#e39b0c}
+.prototype-status-legend span:nth-child(2)::before{background:#ce2440}
+.prototype-status-legend span:nth-child(3)::before{background:#14834f}
+.toolbar{min-height:42px;margin-bottom:8px;padding:7px 11px;border:1px solid #dde3ea;border-radius:9px;background:#fff}
+.toolbar p{color:#64748b;font-size:11px}
+.toolbar .last-updated{font-size:10px}
+.app-notice:empty{display:none}
+.admin-tabs{display:none}
+.admin-tab-content{height:calc(100% - 50px);overflow-y:auto;padding-right:3px}
+.admin-tab-content>.panel{border:1px solid #dde3ea;border-radius:9px;box-shadow:0 2px 8px #17243b05}
+.panel h2{color:#243147;font-size:14px;font-weight:800}
+.panel h3{color:#970808}
+.section-title p{font-size:10px}
+.primary{background:#970808;border-color:#970808}
+.primary:hover{background:#7e0909}
+.secondary:hover,button.secondary:hover{border-color:#970808;color:#970808}
+.metrics article{border-color:#e1e5eb;border-radius:9px;background:#f8fafc}
+.metrics strong{font-size:20px;color:#243147}
+.audience-chip{border:1px solid #e1e5eb;border-radius:8px;background:#fff;color:#970808}
+.audience-status.open{background:#e7f5ec;color:#147d52}
+.inline-form input,.inline-form select,.filters input,.filters select,.event-roster-filters input,.event-roster-filters select,
+.workflow-stage-control input,.workflow-stage-control select{border-radius:6px}
+.workflow-stepper{gap:4px}
+.workflow-step{min-width:132px;border-radius:7px}
+.workflow-fields textarea,.workflow-report pre{border-radius:7px}
+.workflow-report pre{background:#f8fafc}
+
+@media(max-width:900px){
+  .system-nav{display:none}
+  .wrap{height:calc(100vh - 72px)}
+  #adminApp{padding-left:176px}
+  .prototype-sidebar{width:166px}
+  .prototype-flow-step{font-size:9px}
+}
+@media(max-width:700px){
+  .masthead{width:100%;margin-top:0;border-radius:0}
+  .masthead .system-brand h1{font-size:12px}
+  .masthead .home-link{font-size:10px;padding:6px 8px}
+  .wrap{width:100%;height:calc(100vh - 56px);padding:8px}
+  #adminApp{padding:92px 0 0}
+  .prototype-sidebar{inset:0 0 auto;height:84px;width:100%;padding:7px;display:block;overflow:hidden}
+  .prototype-sidebar-heading,.prototype-status-legend{display:none}
+  .prototype-flow{display:flex;gap:5px;height:68px;overflow-x:auto}
+  .prototype-flow-group{display:flex;flex:0 0 auto;gap:4px}
+  .prototype-group-title{display:none}
+  .prototype-flow-step{width:auto;min-width:112px}
+  .toolbar{height:42px}
+  .admin-tab-content{height:calc(100% - 50px)}
 }
 @media print{
   body.print-event-list *{visibility:hidden!important}

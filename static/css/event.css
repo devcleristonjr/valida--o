@@ -16,7 +16,7 @@ body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
-  padding: 28px 18px;
+  padding: 0;
   background: radial-gradient(ellipse at 50% 0, #f8e9ea 0, transparent 46%), var(--page);
   color: var(--ink);
   font: 15px/1.5 Inter, "Segoe UI", Arial, sans-serif;
@@ -26,7 +26,7 @@ button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .6; }
 
-.event-shell { width: min(100%, 900px); margin: 0 auto; }
+.event-shell { width: 100%; min-height: 100vh; margin: 0; padding: 18px 22px 24px; }
 .event-header { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
 .brand-mark {
   display: grid; width: 52px; height: 52px; flex: 0 0 auto; place-items: center;
@@ -108,4 +108,51 @@ footer { padding: 8px; color: var(--muted); font-size: 12px; text-align: center;
   .event-header, .event-notice, #eventRegistrationForm, .lookup-form, #lookupMessage, footer,
   .event-shell > .event-panel:not(.credential-panel), #printCredential { display: none!important; }
   .event-panel.credential-panel { display: block!important; border: 0; box-shadow: none; }
+}
+
+.event-header.institutional-header {
+  min-height: 78px;
+  margin-bottom: 16px;
+  padding: 12px 20px;
+  gap: 18px;
+}
+
+.event-header .institutional-brand {
+  width: 220px;
+  height: 54px;
+  border-radius: 8px;
+  background: #fff;
+  color: #970808;
+  font-size: 17px;
+  letter-spacing: .08em;
+}
+
+.event-header .home-link {
+  border: 1px solid #fff;
+  border-radius: 7px;
+  background: #fff;
+  color: #970808;
+}
+
+.event-panel {
+  border-radius: 12px;
+  box-shadow: 0 5px 20px #24314708;
+}
+
+input,
+select {
+  border-radius: 7px;
+}
+
+@media (max-width: 650px) {
+  .event-header.institutional-header {
+    padding: 12px;
+  }
+
+  .event-header .institutional-brand {
+    width: 100%;
+  }
+
+  body { padding: 0; }
+  .event-shell { padding: 10px 10px 18px; }
 }

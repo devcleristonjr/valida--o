@@ -1,6 +1,18 @@
 #tab-cadastro > .grid {
-  grid-template-columns: minmax(0, 1080px);
-  justify-content: center;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+}
+
+#tab-cadastro,
+#tab-cadastro > .grid,
+#tab-cadastro .panel,
+#tab-cadastro .formgrid {
+  width: 100%;
+  max-width: none;
+}
+
+#tab-cadastro {
+  min-height: calc(100vh - 210px);
 }
 
 .institutional-header > .home-link {
@@ -31,5 +43,181 @@
   .institutional-header > .home-link {
     min-height: 44px;
     margin-inline: auto;
+  }
+}
+
+.shell {
+  width: 100%;
+  max-width: none;
+  min-height: 100vh;
+  margin: 0;
+  padding: 18px 22px 24px;
+  background: transparent;
+}
+
+.institutional-header {
+  min-height: 78px;
+  border: 0;
+  border-radius: 12px;
+  background: linear-gradient(105deg, #9b0102 0%, #780000 65%, #450f0f 100%);
+  color: #fff;
+  box-shadow: 0 7px 18px #450f0f18;
+}
+
+.institutional-brand {
+  width: 220px;
+  max-width: 220px;
+  flex: 0 0 220px;
+  min-height: 54px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.institutional-brand img {
+  max-height: 42px;
+  object-fit: contain;
+}
+
+.institutional-heading h1,
+.institutional-heading p,
+.institutional-heading .eyebrow,
+.institutional-label {
+  color: #fff !important;
+}
+
+.institutional-tools .btn {
+  min-height: 40px;
+  border: 1px solid #fff;
+  border-radius: 7px;
+  background: #fff;
+  color: #970808;
+  font-weight: 800;
+}
+
+.institutional-tools .viewtoggle {
+  border-radius: 7px;
+  background: #ffffff22;
+}
+
+.institutional-tools .viewtoggle button.active {
+  background: #fff;
+  color: #970808;
+}
+
+.tabs {
+  margin-bottom: 16px;
+  border-bottom: 2px solid #970808;
+  background: transparent;
+}
+
+.tabs button {
+  border-radius: 7px 7px 0 0;
+  background: #fee7e7;
+  color: #8b1010;
+}
+
+.tabs button.active {
+  background: #970808;
+  color: #fff;
+}
+
+.panel,
+.metric,
+.stat,
+.scanner,
+.formgrid {
+  border-radius: 10px;
+}
+
+.panel {
+  border: 1px solid #dde3ea;
+  box-shadow: 0 5px 20px #24314708;
+}
+
+.metric,
+.stat {
+  border: 1px solid #dde3ea;
+  background: #f8fafc;
+}
+
+.btn.primary,
+.field:focus {
+  border-color: #970808;
+}
+
+.btn.primary {
+  background: #970808;
+  color: #fff;
+}
+
+@media (max-width: 650px) {
+  .shell {
+    padding: 10px;
+  }
+
+  .institutional-header {
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .institutional-brand {
+    width: 100%;
+    max-width: 100%;
+    flex: 1 0 100%;
+  }
+
+  .institutional-heading,
+  .institutional-tools {
+    flex: 1 0 100%;
+  }
+
+  .institutional-heading {
+    text-align: center;
+  }
+
+  .institutional-tools {
+    justify-content: center;
+  }
+}
+
+html,
+body {
+  width: 100%;
+  min-width: 320px;
+  max-width: none;
+  min-height: 100vh;
+  margin: 0;
+}
+
+.shell {
+  width: 100% !important;
+  max-width: none !important;
+  min-height: 100vh;
+  margin: 0 !important;
+  padding: 18px 22px 24px !important;
+}
+
+.institutional-header {
+  width: 100%;
+  margin-inline: 0;
+}
+
+.grid {
+  width: 100%;
+  max-width: none;
+}
+
+@media (max-width: 650px) {
+  .shell {
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 100vh;
+    padding: 10px !important;
+  }
+
+  body.mobile .shell {
+    max-width: 430px !important;
   }
 }

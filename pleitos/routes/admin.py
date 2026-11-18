@@ -30,6 +30,7 @@ from ..models import (
     EmailNotification,
     Event,
     EventParticipant,
+    EventWorkflow,
     LookupChallenge,
     Participant,
     RegistrationInvite,
@@ -126,6 +127,101 @@ def event_payload(event):
         "location": event.location,
         "active": event.active,
         **activity_capacity_payload(event),
+    }
+
+
+WORKFLOW_STAGES = (
+    "demand",
+    "analysis",
+    "agenda",
+    "technical_note",
+    "ceremonial",
+    "secom",
+    "report",
+)
+
+
+def workflow_defaults():
+    return {
+        "demand": {
+            "requester": "",
+            "origin": "",
+            "description": "",
+            "received_at": "",
+        },
+        "analysis": {
+            "relevance": "",
+            "decision": "Em análise",
+            "opinion": "",
+            "adjustments": "",
+        },
+        "agenda": {
+            "team": "",
+            "political": "",
+            "logistics": "",
+            "transport": "",
+            "security": "",
+            "lodging": "",
+            "checklist": [],
+        },
+        "technical_note": {
+            "population": "",
+            "idh": "",
+            "gdp": "",
+            "economy": "",
+            "investments": "",
+            "local_demands": "",
+            "trip_report": "",
+        },
+        "ceremonial": {
+            "route": [],
+            "plaques": [],
+            "acts": [],
+            "visits": "",
+            "return_note": "",
+        },
+        "secom": {
+            "brief": "",
+            "release": "",
+            "deliverables": [],
+        },
+        "report": {
+            "authorities": [],
+            "geography": "",
+            "assessment": "",
+        },
+    }
+
+
+def ensure_workflow(event):
+    workflow = EventWorkflow.query.filter_by(event_id=event.id).first()
+    if workflow:
+        return workflow
+    workflow = EventWorkflow(
+        event_id=event.id,
+        **workflow_defaults(),
+        stage_status={stage: {"status": "pending", "owner": "", "due_at": ""} for stage in WORKFLOW_STAGES},
+        stage_history=[],
+    )
+    db.session.add(workflow)
+    db.session.flush()
+    return workflow
+
+
+def workflow_payload(workflow):
+    return {
+        "current_stage": workflow.current_stage,
+        "closed": workflow.closed,
+        "demand": workflow.demand or {},
+        "analysis": workflow.analysis or {},
+        "agenda": workflow.agenda or {},
+        "technical_note": workflow.technical_note or {},
+        "ceremonial": workflow.ceremonial or {},
+        "secom": workflow.secom or {},
+        "report": workflow.report or {},
+        "stage_status": workflow.stage_status or {},
+        "stage_history": workflow.stage_history or [],
+        "updated_at": workflow.updated_at.isoformat() if workflow.updated_at else None,
     }
 
 
@@ -450,6 +546,7 @@ def create_event():
     if error:
         return jsonify({"error": error}), 400
     db.session.add(event)
+    ensure_workflow(event)
     record_audit(current_admin(), "create_event", details=f"{name} · {event_date.isoformat()}")
     try:
         db.session.commit()
@@ -522,6 +619,155 @@ def update_event(event_id):
             "cancellation_notices": cancellation_notice_count,
         }
     )
+
+
+def consolidated_event_report(event, workflow):
+    demand = workflow.demand or {}
+    analysis = workflow.analysis or {}
+    agenda = workflow.agenda or {}
+    note = workflow.technical_note or {}
+    ceremonial = workflow.ceremonial or {}
+    secom = workflow.secom or {}
+    report = workflow.report or {}
+    checklist = agenda.get("checklist", [])
+    lines = [
+        f"RELATÓRIO DO EVENTO: {event.name}",
+        f"{event.date.isoformat()} · {event.location}",
+        "",
+        "1. DEMANDA E ANÁLISE",
+        f"Solicitante: {demand.get('requester') or '—'} ({demand.get('origin') or '—'})",
+        f"Descrição: {demand.get('description') or '—'}",
+        f"Decisão: {analysis.get('decision') or '—'} | Pertinência: {analysis.get('relevance') or '—'}",
+        f"Parecer: {analysis.get('opinion') or '—'}",
+        "",
+        "2. AGENDA",
+        f"Equipe: {agenda.get('team') or '—'}",
+        f"Organização política: {agenda.get('political') or '—'}",
+        f"Logística: {agenda.get('logistics') or '—'}",
+        f"Checklist: {sum(1 for item in checklist if item.get('done'))}/{len(checklist)}",
+        "",
+        "3. NOTA TÉCNICA",
+        f"População: {note.get('population') or '—'} | IDH: {note.get('idh') or '—'} | PIB: {note.get('gdp') or '—'}",
+        f"Economia: {note.get('economy') or '—'}",
+        f"Investimentos: {note.get('investments') or '—'}",
+        f"Demandas locais: {note.get('local_demands') or '—'}",
+        f"Relatório de viagem: {note.get('trip_report') or '—'}",
+        "",
+        "4. CERIMONIAL",
+        f"Visitas: {ceremonial.get('visits') or '—'}",
+        f"Retorno: {ceremonial.get('return_note') or '—'}",
+        "",
+        "5. SECOM",
+        f"Pauta: {secom.get('brief') or '—'}",
+        f"Release: {secom.get('release') or '—'}",
+        "",
+        "6. AUTORIDADES E GEOGRAFIA",
+    ]
+    for authority in report.get("authorities", []):
+        lines.append(
+            f"- {authority.get('name') or '—'}, {authority.get('role') or '—'} "
+            f"({authority.get('party') or '—'}), {authority.get('municipality') or '—'}"
+        )
+    lines.extend([
+        f"Geografia política: {report.get('geography') or '—'}",
+        f"Avaliação: {report.get('assessment') or '—'}",
+    ])
+    return "\n".join(lines)
+
+
+@admin_bp.get("/events/<event_id>/workflow")
+@admin_required
+def get_event_workflow(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        return jsonify({"error": "Evento não encontrado."}), 404
+    workflow = ensure_workflow(event)
+    db.session.commit()
+    return jsonify({
+        **workflow_payload(workflow),
+        "consolidated_report": consolidated_event_report(event, workflow),
+    })
+
+
+@admin_bp.patch("/events/<event_id>/workflow")
+@admin_required
+def update_event_workflow(event_id):
+    event = db.session.get(Event, event_id)
+    if not event:
+        return jsonify({"error": "Evento não encontrado."}), 404
+    workflow = ensure_workflow(event)
+    data = json_object()
+    if workflow.closed:
+        return jsonify({"error": "O fluxo deste evento já foi encerrado."}), 409
+
+    for key in WORKFLOW_STAGES:
+        if key in data:
+            value = data[key]
+            if not isinstance(value, dict):
+                return jsonify({"error": f"Dados inválidos para a etapa {key}."}), 400
+            setattr(workflow, key, value)
+
+    if "stage_status" in data:
+        value = data["stage_status"]
+        if not isinstance(value, dict):
+            return jsonify({"error": "Situação das etapas inválida."}), 400
+        sanitized_status = {}
+        for stage in WORKFLOW_STAGES:
+            item = value.get(stage, {})
+            if not isinstance(item, dict):
+                item = {}
+            sanitized_status[stage] = {
+                "status": item.get("status") if item.get("status") in {"pending", "in_progress", "completed", "blocked"} else "pending",
+                "owner": str(item.get("owner") or "")[:160],
+                "due_at": str(item.get("due_at") or "")[:20],
+            }
+        workflow.stage_status = sanitized_status
+
+    if data.get("advance") is True:
+        if workflow.current_stage >= len(WORKFLOW_STAGES) - 1:
+            return jsonify({"error": "Já está na última etapa do fluxo."}), 400
+        completed_stage = WORKFLOW_STAGES[workflow.current_stage]
+        status = workflow.stage_status or {}
+        status[completed_stage] = {
+            **status.get(completed_stage, {}),
+            "status": "completed",
+        }
+        workflow.stage_status = status
+        workflow.current_stage += 1
+        workflow.stage_history = (workflow.stage_history or []) + [{
+            "stage": completed_stage,
+            "action": "completed",
+            "by": current_admin().username,
+            "at": utcnow().isoformat(),
+        }]
+
+    if data.get("close") is True:
+        workflow.closed = True
+        final_stage = WORKFLOW_STAGES[-1]
+        status = workflow.stage_status or {}
+        status[final_stage] = {
+            **status.get(final_stage, {}),
+            "status": "completed",
+        }
+        workflow.stage_status = status
+        workflow.stage_history = (workflow.stage_history or []) + [{
+            "stage": final_stage,
+            "action": "closed",
+            "by": current_admin().username,
+            "at": utcnow().isoformat(),
+        }]
+
+    workflow.updated_at = utcnow()
+    record_audit(
+        current_admin(),
+        "update_event_workflow",
+        details=f"{event.name}",
+    )
+    db.session.commit()
+    return jsonify({
+        **workflow_payload(workflow),
+        "consolidated_report": consolidated_event_report(event, workflow),
+    })
 
 
 @admin_bp.get("/event-participants")

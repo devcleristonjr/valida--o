@@ -20,6 +20,7 @@ from pleitos.models import (
     EmailNotification,
     Event,
     EventParticipant,
+    EventWorkflow,
     Participant,
     RegistrationInvite,
     utcnow,
@@ -723,6 +724,8 @@ class PleitosApiTests(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"PLEITOS", response.data)
+        self.assertIn(b"/static/css/institutional.css", response.data)
+        self.assertIn(b"institutional-header", response.data)
         self.assertIn(b'href="/cadastro"', response.data)
         self.assertIn(b'href="/evento"', response.data)
         self.assertIn(b'href="/admin"', response.data)
@@ -734,6 +737,7 @@ class PleitosApiTests(unittest.TestCase):
         response = self.client.get("/cadastro")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"PLEITOS", response.data)
+        self.assertIn(b"/static/css/institutional.css", response.data)
         self.assertIn(b"/static/js/public.js", response.data)
         self.assertIn(b"/static/css/public-layout.css", response.data)
         self.assertIn(b'class="home-link" href="/">In\xc3\xadcio</a>', response.data)
@@ -748,9 +752,70 @@ class PleitosApiTests(unittest.TestCase):
     def test_event_registration_page_has_separate_entry_point(self):
         response = self.client.get("/evento")
         self.assertEqual(response.status_code, 200)
+        self.assertIn(b"/static/css/institutional.css", response.data)
+        self.assertIn(b"institutional-header", response.data)
         self.assertIn(b"/static/js/event.js", response.data)
         self.assertIn(b"/static/css/event.css", response.data)
         self.assertIn(b'id="eventRegistrationForm"', response.data)
+
+    def test_admin_page_uses_institutional_prototype_layout(self):
+        response = self.client.get("/admin")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"/static/css/institutional.css", response.data)
+        self.assertIn(b'class="prototype-sidebar"', response.data)
+        self.assertIn(b"Planejamento institucional", response.data)
+        self.assertIn(b"Dados e Audi\xc3\xaancias", response.data)
+
+    def test_event_workflow_supports_stages_checklists_and_closure(self):
+        event_id = self.create_event("Evento institucional")
+        response = self.client.get(
+            f"/api/admin/events/{event_id}/workflow",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["current_stage"], 0)
+        self.assertFalse(response.json["closed"])
+        workflow = EventWorkflow.query.filter_by(event_id=event_id).one()
+        self.assertEqual(workflow.demand["requester"], "")
+
+        response = self.client.patch(
+            f"/api/admin/events/{event_id}/workflow",
+            json={
+                "demand": {
+                    "requester": "Gabinete",
+                    "origin": "Ofício 123",
+                    "description": "Entrega institucional",
+                    "received_at": "2026-11-18",
+                },
+                "agenda": {
+                    "team": "Cerimonial",
+                    "political": "Prefeitura",
+                    "logistics": "Palanque confirmado",
+                    "transport": "Van",
+                    "security": "Casa Militar",
+                    "lodging": "",
+                    "checklist": [{"t": "Contato com o anfitrião", "done": True}],
+                },
+                "stage_status": {
+                    "demand": {"status": "in_progress", "owner": "Coordenação", "due_at": "2026-11-20"},
+                },
+                "advance": True,
+            },
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["current_stage"], 1)
+        self.assertIn("Entrega institucional", response.json["consolidated_report"])
+        self.assertEqual(response.json["demand"]["requester"], "Gabinete")
+        self.assertEqual(response.json["agenda"]["checklist"][0]["done"], True)
+
+        closed = self.client.patch(
+            f"/api/admin/events/{event_id}/workflow",
+            json={"close": True},
+            headers=self.headers,
+        )
+        self.assertEqual(closed.status_code, 200)
+        self.assertTrue(closed.json["closed"])
+        self.assertGreaterEqual(len(closed.json["stage_history"]), 2)
 
     def test_database_data_survives_recreating_the_application(self):
         database_path = Path(self.temp_dir.name) / "persistent.sqlite"

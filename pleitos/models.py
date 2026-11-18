@@ -42,6 +42,29 @@ class Event(db.Model):
     )
 
 
+class EventWorkflow(db.Model):
+    __tablename__ = "event_workflows"
+    event_id = db.Column(
+        db.String(36), db.ForeignKey("events.id", ondelete="CASCADE"), primary_key=True
+    )
+    current_stage = db.Column(db.Integer, nullable=False, default=0)
+    closed = db.Column(db.Boolean, nullable=False, default=False)
+    demand = db.Column(db.JSON, nullable=False, default=dict)
+    analysis = db.Column(db.JSON, nullable=False, default=dict)
+    agenda = db.Column(db.JSON, nullable=False, default=dict)
+    technical_note = db.Column(db.JSON, nullable=False, default=dict)
+    ceremonial = db.Column(db.JSON, nullable=False, default=dict)
+    secom = db.Column(db.JSON, nullable=False, default=dict)
+    report = db.Column(db.JSON, nullable=False, default=dict)
+    stage_status = db.Column(db.JSON, nullable=False, default=dict)
+    stage_history = db.Column(db.JSON, nullable=False, default=list)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = db.Column(
+        db.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+    event = db.relationship("Event", backref=db.backref("workflow", uselist=False, cascade="all, delete-orphan"))
+
+
 class Participant(db.Model):
     __tablename__ = "participants"
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
