@@ -3,6 +3,7 @@ import hmac
 import io
 import re
 import secrets
+import uuid
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -20,6 +21,7 @@ from flask import (
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import check_password_hash
+from werkzeug.utils import secure_filename
 
 from ..extensions import db
 from ..models import (
@@ -29,9 +31,17 @@ from ..models import (
     AuditLog,
     EmailNotification,
     Event,
+    EventAct,
+    EventAnalysis,
+    EventAttachment,
+    EventDelivery,
+    EventEnvironment,
+    EventGuest,
+    EventGuestEnvironment,
     EventParticipant,
     EventWorkflow,
     LookupChallenge,
+    MunicipalVisit,
     Participant,
     RegistrationInvite,
     utcnow,
@@ -112,6 +122,11 @@ def audience_payload(audience):
         "name": audience.name,
         "date": audience.date.isoformat(),
         "time": audience.time.strftime("%H:%M"),
+        "location": audience.location,
+        "municipality": audience.municipality,
+        "responsible": audience.responsible,
+        "expectation": audience.expectation,
+        "complementary": audience.complementary,
         "active": audience.active,
         **activity_capacity_payload(audience),
     }
@@ -125,6 +140,15 @@ def event_payload(event):
         "time": event.start_time.strftime("%H:%M"),
         "end_time": event.end_time.strftime("%H:%M") if event.end_time else None,
         "location": event.location,
+        "modality": event.modality,
+        "subject": event.subject,
+        "municipality": event.municipality,
+        "responsible": event.responsible,
+        "teams": event.teams or [],
+        "secretariats": event.secretariats or [],
+        "expectation": event.expectation,
+        "complementary": event.complementary,
+        "general_data": event.general_data or {},
         "active": event.active,
         **activity_capacity_payload(event),
     }
@@ -440,7 +464,16 @@ def create_audience():
         return jsonify({"error": "Data e horário inválidos."}), 400
     if not name or len(name) > 160:
         return jsonify({"error": "Informe o assunto da audiência (até 160 caracteres)."}), 400
-    audience = Audience(name=name, date=audience_date, time=audience_time)
+    audience = Audience(
+        name=name,
+        date=audience_date,
+        time=audience_time,
+        location=str(data.get("location") or "")[:200],
+        municipality=str(data.get("municipality") or "")[:100],
+        responsible=str(data.get("responsible") or "")[:160],
+        expectation=str(data.get("expectation") or "")[:5000],
+        complementary=str(data.get("complementary") or "")[:5000],
+    )
     error = update_activity_settings(audience, data)
     if error:
         return jsonify({"error": error}), 400
@@ -477,6 +510,9 @@ def update_audience(audience_id):
             audience.time = datetime.strptime(data["time"], "%H:%M").time()
         except (TypeError, ValueError):
             return jsonify({"error": "Horário inválido."}), 400
+    for field in ("location", "municipality", "responsible", "expectation", "complementary"):
+        if field in data:
+            setattr(audience, field, str(data[field] or "")[:5000])
     previous_status = audience.lifecycle_status
     error = update_activity_settings(audience, data)
     if error:
@@ -541,6 +577,15 @@ def create_event():
         start_time=start_time,
         end_time=end_time,
         location=location,
+        modality=str(data.get("modality") or "event")[:30],
+        subject=str(data.get("subject") or name)[:160],
+        municipality=str(data.get("municipality") or "")[:100],
+        responsible=str(data.get("responsible") or "")[:160],
+        teams=[str(v)[:80] for v in data.get("teams", [])] if isinstance(data.get("teams"), list) else [],
+        secretariats=[str(v)[:160] for v in data.get("secretariats", [])] if isinstance(data.get("secretariats"), list) else [],
+        expectation=str(data.get("expectation") or "")[:5000],
+        complementary=str(data.get("complementary") or "")[:5000],
+        general_data=data.get("general_data") if isinstance(data.get("general_data"), dict) else {},
     )
     error = update_activity_settings(event, data)
     if error:
@@ -592,6 +637,26 @@ def update_event(event_id):
         if not isinstance(location, str) or not location.strip() or len(location.strip()) > 200:
             return jsonify({"error": "Local do evento inválido."}), 400
         event.location = location.strip()
+    for field in ("subject", "municipality", "responsible", "expectation", "complementary"):
+        if field in data:
+            setattr(event, field, str(data[field] or "")[:5000])
+    if "modality" in data:
+        modality = str(data["modality"] or "")
+        if modality not in {"visit", "event", "audience"}:
+            return jsonify({"error": "Modalidade inválida."}), 400
+        event.modality = modality
+    if "teams" in data:
+        if not isinstance(data["teams"], list):
+            return jsonify({"error": "Equipes responsáveis inválidas."}), 400
+        event.teams = [str(v)[:80] for v in data["teams"]]
+    if "secretariats" in data:
+        if not isinstance(data["secretariats"], list):
+            return jsonify({"error": "Secretarias inválidas."}), 400
+        event.secretariats = [str(v)[:160] for v in data["secretariats"]]
+    if "general_data" in data:
+        if not isinstance(data["general_data"], dict):
+            return jsonify({"error": "Dados gerais inválidos."}), 400
+        event.general_data = data["general_data"]
     if event.end_time and event.end_time <= event.start_time:
         return jsonify({"error": "O horário de encerramento deve ser posterior ao início."}), 400
     previous_status = event.lifecycle_status
@@ -675,6 +740,371 @@ def consolidated_event_report(event, workflow):
     return "\n".join(lines)
 
 
+@admin_bp.get("/events/<event_id>/acts")
+@admin_required
+def list_event_acts(event_id):
+    if not db.session.get(Event, event_id):
+        return jsonify({"error": "Evento não encontrado."}), 404
+    rows = EventAct.query.filter_by(event_id=event_id).order_by(EventAct.created_at).all()
+    return jsonify([{
+        "id": row.id, "municipality": row.municipality, "secretariat": row.secretariat,
+        "act": row.act, "action": row.action, "species": row.species,
+        "classification": row.classification, "modality": row.modality,
+        "budget_ceiling": float(row.budget_ceiling) if row.budget_ceiling is not None else None,
+        "validation_status": row.validation_status, "justification": row.justification, "data": row.data,
+    } for row in rows])
+
+
+@admin_bp.post("/events/<event_id>/acts")
+@admin_required
+def create_event_act(event_id):
+    if not db.session.get(Event, event_id):
+        return jsonify({"error": "Evento não encontrado."}), 404
+    data = json_object()
+    act = EventAct(
+        event_id=event_id,
+        municipality=str(data.get("municipality") or "")[:100],
+        secretariat=str(data.get("secretariat") or "")[:160],
+        act=str(data.get("act") or "")[:160],
+        action=str(data.get("action") or "")[:240],
+        species=str(data.get("species") or "")[:80],
+        classification=str(data.get("classification") or "")[:80],
+        modality=str(data.get("modality") or "")[:80],
+        validation_status=str(data.get("validation_status") or "pending")[:20],
+        justification=str(data.get("justification") or "")[:5000],
+        data={k: v for k, v in data.items() if k not in {"municipality", "secretariat", "act", "action", "species", "classification", "modality", "validation_status", "justification", "budget_ceiling"}},
+    )
+    if data.get("budget_ceiling") not in (None, ""):
+        try:
+            act.budget_ceiling = float(data["budget_ceiling"])
+        except (TypeError, ValueError):
+            return jsonify({"error": "Teto orçamentário inválido."}), 400
+    db.session.add(act)
+    record_audit(current_admin(), "create_event_act", details=f"Evento {event_id}")
+    db.session.commit()
+    return jsonify({"id": act.id}), 201
+
+
+@admin_bp.delete("/events/<event_id>/acts/<act_id>")
+@admin_required
+def delete_event_act(event_id, act_id):
+    act = EventAct.query.filter_by(event_id=event_id, id=act_id).first()
+    if not act:
+        return jsonify({"error": "Ato não encontrado."}), 404
+    db.session.delete(act)
+    record_audit(current_admin(), "delete_event_act", details=f"Ato {act_id}")
+    db.session.commit()
+    return jsonify({"deleted": True})
+
+
+@admin_bp.get("/events/<event_id>/guests")
+@admin_required
+def list_event_guests(event_id):
+    if not db.session.get(Event, event_id):
+        return jsonify({"error": "Evento não encontrado."}), 404
+    rows = EventGuest.query.filter_by(event_id=event_id).order_by(EventGuest.name).all()
+    return jsonify([{
+        "id": row.id, "origin": row.origin, "name": row.name, "ballot_name": row.ballot_name,
+        "role": row.role, "municipality": row.municipality, "party": row.party,
+        "political_support": row.political_support, "allowed_environment": row.allowed_environment,
+        "allowed_area": row.allowed_area, "representative": row.representative,
+        "invitation_status": row.invitation_status, "acceptance_status": row.acceptance_status,
+        "phone": decrypt(row.phone_encrypted) if row.phone_encrypted else "",
+        "email": decrypt(row.email_encrypted) if row.email_encrypted else "",
+    } for row in rows])
+
+
+@admin_bp.post("/events/<event_id>/guests")
+@admin_required
+def create_event_guest(event_id):
+    if not db.session.get(Event, event_id):
+        return jsonify({"error": "Evento não encontrado."}), 404
+    data = json_object()
+    name = str(data.get("name") or "").strip()
+    if not name or len(name) > 150:
+        return jsonify({"error": "Informe o nome do convidado."}), 400
+    guest = EventGuest(
+        event_id=event_id, origin=str(data.get("origin") or "")[:100], name=name,
+        ballot_name=str(data.get("ballot_name") or "")[:150],
+        phone_encrypted=encrypt(str(data.get("phone") or "")) if data.get("phone") else None,
+        email_encrypted=encrypt(str(data.get("email") or "")) if data.get("email") else None,
+        role=str(data.get("role") or "")[:120], municipality=str(data.get("municipality") or "")[:100],
+        party=str(data.get("party") or "")[:100], political_support=str(data.get("political_support") or "")[:160],
+        allowed_environment=str(data.get("allowed_environment") or "")[:160],
+        allowed_area=str(data.get("allowed_area") or "")[:160],
+        representative=str(data.get("representative") or "")[:150],
+        invitation_status=str(data.get("invitation_status") or "not_sent")[:20],
+        acceptance_status=str(data.get("acceptance_status") or "pending")[:20],
+    )
+    db.session.add(guest)
+    record_audit(current_admin(), "create_event_guest", details=name)
+    db.session.commit()
+    return jsonify({"id": guest.id}), 201
+
+
+@admin_bp.patch("/events/<event_id>/guests/<guest_id>")
+@admin_required
+def update_event_guest(event_id, guest_id):
+    guest = EventGuest.query.filter_by(event_id=event_id, id=guest_id).first()
+    if not guest:
+        return jsonify({"error": "Convidado não encontrado."}), 404
+    data = json_object()
+    for field in ("origin", "name", "ballot_name", "role", "municipality", "party", "political_support", "allowed_environment", "allowed_area", "representative", "invitation_status", "acceptance_status"):
+        if field in data:
+            setattr(guest, field, str(data[field] or "")[:160])
+    if "phone" in data:
+        guest.phone_encrypted = encrypt(str(data["phone"] or "")) if data["phone"] else None
+    if "email" in data:
+        guest.email_encrypted = encrypt(str(data["email"] or "")) if data["email"] else None
+    if "confirmation" in data:
+        guest.confirmation_history = (guest.confirmation_history or []) + [{
+            "status": str(data["confirmation"]),
+            "by": current_admin().username,
+            "at": utcnow().isoformat(),
+        }]
+    record_audit(current_admin(), "update_event_guest", details=guest.name)
+    db.session.commit()
+    return jsonify({"id": guest.id, "acceptance_status": guest.acceptance_status})
+
+
+@admin_bp.delete("/events/<event_id>/guests/<guest_id>")
+@admin_required
+def delete_event_guest(event_id, guest_id):
+    guest = EventGuest.query.filter_by(event_id=event_id, id=guest_id).first()
+    if not guest:
+        return jsonify({"error": "Convidado não encontrado."}), 404
+    db.session.delete(guest)
+    record_audit(current_admin(), "delete_event_guest", details=guest.name)
+    db.session.commit()
+    return jsonify({"deleted": True})
+
+
+@admin_bp.get("/events/<event_id>/environments")
+@admin_required
+def list_event_environments(event_id):
+    rows = EventEnvironment.query.filter_by(event_id=event_id).order_by(EventEnvironment.name).all()
+    return jsonify([{
+        "id": row.id, "type": row.type, "name": row.name, "capacity": row.capacity,
+        "color": row.color, "representative_allowed": row.representative_allowed,
+        "occupied": EventGuestEnvironment.query.filter_by(environment_id=row.id).count(),
+    } for row in rows])
+
+
+@admin_bp.post("/events/<event_id>/environments")
+@admin_required
+def create_event_environment(event_id):
+    if not db.session.get(Event, event_id):
+        return jsonify({"error": "Evento não encontrado."}), 404
+    data = json_object()
+    name = str(data.get("name") or "").strip()
+    try:
+        capacity = int(data.get("capacity"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Capacidade inválida."}), 400
+    if not name or capacity < 1:
+        return jsonify({"error": "Nome e capacidade são obrigatórios."}), 400
+    environment = EventEnvironment(event_id=event_id, type=str(data.get("type") or "")[:50],
+        name=name[:160], capacity=capacity, color=str(data.get("color") or "#dc2626")[:20],
+        representative_allowed=data.get("representative_allowed") is True)
+    db.session.add(environment)
+    record_audit(current_admin(), "create_event_environment", details=name)
+    db.session.commit()
+    return jsonify({"id": environment.id}), 201
+
+
+@admin_bp.post("/events/<event_id>/guest-environments")
+@admin_required
+def link_event_guest_environment(event_id):
+    data = json_object()
+    guest = EventGuest.query.filter_by(event_id=event_id, id=data.get("guest_id")).first()
+    environment = EventEnvironment.query.filter_by(event_id=event_id, id=data.get("environment_id")).first()
+    if not guest or not environment:
+        return jsonify({"error": "Convidado ou ambiente inválido."}), 400
+    occupied = EventGuestEnvironment.query.filter_by(environment_id=environment.id).count()
+    if occupied >= environment.capacity:
+        return jsonify({"error": "A capacidade do ambiente foi atingida."}), 409
+    link = EventGuestEnvironment(event_id=event_id, guest_id=guest.id, environment_id=environment.id,
+        area=str(data.get("area") or "")[:160], with_representative=data.get("with_representative") is True)
+    db.session.add(link)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "Convidado já vinculado a este ambiente."}), 409
+    record_audit(current_admin(), "link_event_guest_environment", details=f"{guest.name} · {environment.name}")
+    db.session.commit()
+    return jsonify({"id": link.id}), 201
+
+
+@admin_bp.get("/visits")
+@admin_required
+def list_visits():
+    rows = MunicipalVisit.query.order_by(MunicipalVisit.date, MunicipalVisit.time).all()
+    return jsonify([{
+        "id": row.id, "municipality": row.municipality, "activity": row.activity,
+        "date": row.date.isoformat(), "time": row.time.strftime("%H:%M"),
+        "location": row.location, "responsible": row.responsible, "observations": row.observations,
+    } for row in rows])
+
+
+@admin_bp.post("/visits")
+@admin_required
+def create_visit():
+    data = json_object()
+    try:
+        visit_date = datetime.strptime(str(data.get("date") or ""), "%Y-%m-%d").date()
+        visit_time = datetime.strptime(str(data.get("time") or ""), "%H:%M").time()
+    except (TypeError, ValueError):
+        return jsonify({"error": "Data e horário da visita inválidos."}), 400
+    municipality = str(data.get("municipality") or "").strip()
+    activity = str(data.get("activity") or "").strip()
+    if not municipality or not activity:
+        return jsonify({"error": "Município e atividade são obrigatórios."}), 400
+    visit = MunicipalVisit(municipality=municipality[:100], activity=activity[:200], date=visit_date,
+        time=visit_time, location=str(data.get("location") or "")[:200],
+        responsible=str(data.get("responsible") or "")[:160], observations=str(data.get("observations") or "")[:5000])
+    db.session.add(visit)
+    record_audit(current_admin(), "create_municipal_visit", details=f"{municipality} · {activity}")
+    db.session.commit()
+    return jsonify({"id": visit.id}), 201
+
+
+@admin_bp.get("/events/<event_id>/analyses")
+@admin_required
+def list_event_analyses(event_id):
+    rows = EventAnalysis.query.filter_by(event_id=event_id).order_by(EventAnalysis.created_at.desc()).all()
+    return jsonify([{
+        "id": row.id, "stage": row.stage, "record_id": row.record_id, "reason": row.reason,
+        "origin": row.origin, "responsible": row.responsible, "status": row.status,
+        "provision": row.provision, "history": row.history or [],
+        "created_at": row.created_at.isoformat(), "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+    } for row in rows])
+
+
+@admin_bp.post("/events/<event_id>/analyses")
+@admin_required
+def create_event_analysis(event_id):
+    if not db.session.get(Event, event_id):
+        return jsonify({"error": "Evento não encontrado."}), 404
+    data = json_object()
+    reason = str(data.get("reason") or "").strip()
+    if not reason:
+        return jsonify({"error": "Informe o motivo da análise."}), 400
+    analysis = EventAnalysis(event_id=event_id, stage=str(data.get("stage") or "")[:40],
+        record_id=str(data.get("record_id") or "")[:36] or None, reason=reason[:5000],
+        origin=str(data.get("origin") or "")[:160], responsible=str(data.get("responsible") or "")[:160],
+        history=[{"action": "created", "by": current_admin().username, "at": utcnow().isoformat()}])
+    db.session.add(analysis)
+    record_audit(current_admin(), "create_event_analysis", details=reason)
+    db.session.commit()
+    return jsonify({"id": analysis.id}), 201
+
+
+@admin_bp.patch("/events/<event_id>/analyses/<analysis_id>")
+@admin_required
+def resolve_event_analysis(event_id, analysis_id):
+    analysis = EventAnalysis.query.filter_by(event_id=event_id, id=analysis_id).first()
+    if not analysis:
+        return jsonify({"error": "Análise não encontrada."}), 404
+    data = json_object()
+    if "status" in data:
+        if data["status"] not in {"pending", "in_progress", "resolved"}:
+            return jsonify({"error": "Situação inválida."}), 400
+        analysis.status = data["status"]
+    if "provision" in data:
+        analysis.provision = str(data["provision"] or "")[:5000]
+    if analysis.status == "resolved":
+        analysis.resolved_at = utcnow()
+    analysis.history = (analysis.history or []) + [{"action": "updated", "status": analysis.status,
+        "provision": analysis.provision, "by": current_admin().username, "at": utcnow().isoformat()}]
+    db.session.commit()
+    return jsonify({"id": analysis.id, "status": analysis.status, "resolved_at": analysis.resolved_at.isoformat() if analysis.resolved_at else None})
+
+
+@admin_bp.get("/events/<event_id>/attachments")
+@admin_required
+def list_event_attachments(event_id):
+    rows = EventAttachment.query.filter_by(event_id=event_id).order_by(EventAttachment.created_at.desc()).all()
+    return jsonify([{"id": row.id, "stage": row.stage, "document_type": row.document_type,
+        "original_name": row.original_name, "mime_type": row.mime_type, "size_bytes": row.size_bytes,
+        "created_at": row.created_at.isoformat()} for row in rows])
+
+
+@admin_bp.post("/events/<event_id>/attachments")
+@admin_required
+def upload_event_attachment(event_id):
+    if not db.session.get(Event, event_id):
+        return jsonify({"error": "Evento não encontrado."}), 404
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"error": "Selecione um arquivo."}), 400
+    allowed = {
+        "application/pdf", "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "text/csv", "image/jpeg", "image/png", "image/webp", "audio/mpeg", "audio/wav", "audio/ogg",
+    }
+    if file.mimetype not in allowed:
+        return jsonify({"error": "Tipo de arquivo não permitido."}), 400
+    original_name = secure_filename(file.filename)
+    filename = f"{uuid.uuid4().hex}_{original_name}"
+    folder = Path(current_app.config["UPLOAD_FOLDER"]) / "event-attachments"
+    folder.mkdir(parents=True, exist_ok=True)
+    file.save(folder / filename)
+    size = (folder / filename).stat().st_size
+    attachment = EventAttachment(event_id=event_id, stage=str(request.form.get("stage") or "")[:40],
+        document_type=str(request.form.get("document_type") or "")[:80],
+        original_name=original_name[:255], filename=filename, mime_type=file.mimetype,
+        size_bytes=size, uploaded_by=current_admin().id)
+    db.session.add(attachment)
+    record_audit(current_admin(), "upload_event_attachment", details=original_name)
+    db.session.commit()
+    return jsonify({"id": attachment.id, "original_name": original_name}), 201
+
+
+@admin_bp.delete("/events/<event_id>/attachments/<attachment_id>")
+@admin_required
+def delete_event_attachment(event_id, attachment_id):
+    attachment = EventAttachment.query.filter_by(event_id=event_id, id=attachment_id).first()
+    if not attachment:
+        return jsonify({"error": "Anexo não encontrado."}), 404
+    path = Path(current_app.config["UPLOAD_FOLDER"]) / "event-attachments" / attachment.filename
+    if path.is_file():
+        path.unlink()
+    db.session.delete(attachment)
+    record_audit(current_admin(), "delete_event_attachment", details=attachment.original_name)
+    db.session.commit()
+    return jsonify({"deleted": True})
+
+
+@admin_bp.get("/events/<event_id>/deliveries")
+@admin_required
+def list_event_deliveries(event_id):
+    rows = EventDelivery.query.filter_by(event_id=event_id).order_by(EventDelivery.created_at.desc()).all()
+    return jsonify([{"id": row.id, "item": row.item, "association": row.association,
+        "cnpj": row.cnpj, "observation": row.observation, "photograph": row.photograph,
+        "provision": row.provision} for row in rows])
+
+
+@admin_bp.post("/events/<event_id>/deliveries")
+@admin_required
+def create_event_delivery(event_id):
+    if not db.session.get(Event, event_id):
+        return jsonify({"error": "Evento não encontrado."}), 404
+    data = json_object()
+    item = str(data.get("item") or "").strip()
+    if not item:
+        return jsonify({"error": "Informe o item da entrega."}), 400
+    delivery = EventDelivery(event_id=event_id, item=item[:200],
+        association=str(data.get("association") or "")[:160], cnpj=str(data.get("cnpj") or "")[:18],
+        observation=str(data.get("observation") or "")[:5000], provision=str(data.get("provision") or "")[:5000])
+    db.session.add(delivery)
+    record_audit(current_admin(), "create_event_delivery", details=item)
+    db.session.commit()
+    return jsonify({"id": delivery.id}), 201
+
+
 @admin_bp.get("/events/<event_id>/workflow")
 @admin_required
 def get_event_workflow(event_id):
@@ -742,6 +1172,13 @@ def update_event_workflow(event_id):
         }]
 
     if data.get("close") is True:
+        unresolved = EventAnalysis.query.filter_by(event_id=event.id).filter(
+            EventAnalysis.status != "resolved"
+        ).count()
+        if unresolved:
+            return jsonify({
+                "error": f"Há {unresolved} análise(s) necessária(s) pendente(s). Resolva-as antes de encerrar.",
+            }), 409
         workflow.closed = True
         final_stage = WORKFLOW_STAGES[-1]
         status = workflow.stage_status or {}

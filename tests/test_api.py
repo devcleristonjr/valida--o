@@ -19,6 +19,9 @@ from pleitos.models import (
     Audience,
     EmailNotification,
     Event,
+    EventAct,
+    EventAnalysis,
+    EventEnvironment,
     EventParticipant,
     EventWorkflow,
     Participant,
@@ -816,6 +819,70 @@ class PleitosApiTests(unittest.TestCase):
         self.assertEqual(closed.status_code, 200)
         self.assertTrue(closed.json["closed"])
         self.assertGreaterEqual(len(closed.json["stage_history"]), 2)
+
+    def test_event_management_expansion_persists_acts_environment_and_analysis(self):
+        event_id = self.create_event("Evento ampliado")
+        act = self.client.post(
+            f"/api/admin/events/{event_id}/acts",
+            json={
+                "municipality": "Salvador",
+                "secretariat": "Secretaria de Cultura",
+                "act": "Investimento",
+                "action": "Reforma",
+                "budget_ceiling": "125000.50",
+            },
+            headers=self.headers,
+        )
+        self.assertEqual(act.status_code, 201)
+        self.assertEqual(EventAct.query.filter_by(event_id=event_id).count(), 1)
+
+        environment = self.client.post(
+            f"/api/admin/events/{event_id}/environments",
+            json={"type": "Plateia", "name": "Plateia principal", "capacity": 2},
+            headers=self.headers,
+        )
+        self.assertEqual(environment.status_code, 201)
+        self.assertEqual(EventEnvironment.query.filter_by(event_id=event_id).count(), 1)
+
+        guest = self.client.post(
+            f"/api/admin/events/{event_id}/guests",
+            json={"name": "Convidado persistente", "municipality": "Salvador"},
+            headers=self.headers,
+        )
+        self.assertEqual(guest.status_code, 201)
+        link = self.client.post(
+            f"/api/admin/events/{event_id}/guest-environments",
+            json={"guest_id": guest.json["id"], "environment_id": environment.json["id"]},
+            headers=self.headers,
+        )
+        self.assertEqual(link.status_code, 201)
+
+        analysis = self.client.post(
+            f"/api/admin/events/{event_id}/analyses",
+            json={"reason": "Confirmar documentação", "origin": "Etapa Cerimonial", "responsible": "Coordenação"},
+            headers=self.headers,
+        )
+        self.assertEqual(analysis.status_code, 201)
+        closed = self.client.patch(
+            f"/api/admin/events/{event_id}/workflow",
+            json={"close": True},
+            headers=self.headers,
+        )
+        self.assertEqual(closed.status_code, 409)
+        resolved = self.client.patch(
+            f"/api/admin/events/{event_id}/analyses/{analysis.json['id']}",
+            json={"status": "resolved", "provision": "Documentação recebida"},
+            headers=self.headers,
+        )
+        self.assertEqual(resolved.status_code, 200)
+        self.assertEqual(EventAnalysis.query.filter_by(event_id=event_id).one().status, "resolved")
+        closed_after_resolution = self.client.patch(
+            f"/api/admin/events/{event_id}/workflow",
+            json={"close": True},
+            headers=self.headers,
+        )
+        self.assertEqual(closed_after_resolution.status_code, 200)
+        self.assertTrue(closed_after_resolution.json["closed"])
 
     def test_database_data_survives_recreating_the_application(self):
         database_path = Path(self.temp_dir.name) / "persistent.sqlite"

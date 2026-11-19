@@ -97,6 +97,9 @@ def audiences():
                 "name": item.name,
                 "date": item.date.isoformat(),
                 "time": item.time.strftime("%H:%M"),
+                "location": item.location,
+                "municipality": item.municipality,
+                "responsible": item.responsible,
                 **activity_capacity_payload(item),
             }
             for item in rows
@@ -119,6 +122,8 @@ def event_payload(item):
         "time": item.start_time.strftime("%H:%M"),
         "end_time": item.end_time.strftime("%H:%M") if item.end_time else None,
         "location": item.location,
+        "modality": item.modality,
+        "municipality": item.municipality,
         "active": registration_is_open(item),
         **activity_capacity_payload(item),
     }
